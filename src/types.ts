@@ -67,6 +67,19 @@ export interface NursingStatusReport {
   createdAt: string;
 }
 
+export type NursingPerformanceRatingChoice = 'ممتاز' | 'جيد' | 'غير راضٍ عن الأداء';
+
+export interface NursingPerformanceRating {
+  id: string;
+  departmentId: string;
+  departmentName: string;
+  requestId: string | null;
+  location: string;
+  rating: NursingPerformanceRatingChoice;
+  reason: string;
+  createdAt: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   actorId: string | null;
