@@ -1113,6 +1113,16 @@ export function registerRoutes(app: Express): void {
       }
 
       const name = sanitizeText(req.body?.name, 80) || existing.name;
+      const username = req.body?.username !== undefined ? sanitizeText(req.body.username, 60).toLowerCase() : existing.username;
+      const role = req.body?.role !== undefined ? sanitizeText(req.body.role, 20) as UserRole : existing.role;
+      if (username.length < 3 || !/^[a-z0-9._@-]+$/.test(username)) { res.status(400).json({error: 'اسم المستخدم غير صالح.'}); return; }
+      if (!['admin', 'supervisor', 'worker'].includes(role)) { res.status(400).json({error: 'الدور الوظيفي غير صالح.'}); return; }
+      if (db.prepare('SELECT id FROM users WHERE username = ? AND id <> ?').get(username, id)) { res.status(409).json({error: 'اسم المستخدم مستخدم من حساب آخر.'}); return; }
+      if (existing.role === 'admin' && role !== 'admin') {
+        const activeAdmins = (db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND is_active = 1").get() as {count:number}).count;
+        if (activeAdmins <= 1) { res.status(400).json({error: 'لا يمكن تغيير دور آخر مدير نشط في النظام.'}); return; }
+      }
+      if (id === actor.id && role !== 'admin') { res.status(400).json({error: 'لا يمكنك تغيير دور حساب المدير الحالي.'}); return; }
       const phone = req.body?.phone !== undefined ? sanitizeText(req.body.phone, 24) || null : existing.phone;
       const shiftName =
         req.body?.shiftName !== undefined ? sanitizeText(req.body.shiftName, 60) || null : existing.shift_name;
@@ -1137,15 +1147,15 @@ export function registerRoutes(app: Express): void {
         const passwordHash = hashPassword(newPassword);
         db.prepare(
           `UPDATE users
-           SET name = ?, phone = ?, shift_name = ?, worker_status = ?, is_active = ?, password_hash = ?, updated_at = ?
+           SET name = ?, username = ?, role = ?, phone = ?, shift_name = ?, worker_status = ?, is_active = ?, password_hash = ?, updated_at = ?
            WHERE id = ?`,
-        ).run(name, phone, shiftName, workerStatus, isActive, passwordHash, now, id);
+        ).run(name, username, role, phone, shiftName, workerStatus, isActive, passwordHash, now, id);
       } else {
         db.prepare(
           `UPDATE users
-           SET name = ?, phone = ?, shift_name = ?, worker_status = ?, is_active = ?, updated_at = ?
+           SET name = ?, username = ?, role = ?, phone = ?, shift_name = ?, worker_status = ?, is_active = ?, updated_at = ?
            WHERE id = ?`,
-        ).run(name, phone, shiftName, workerStatus, isActive, now, id);
+        ).run(name, username, role, phone, shiftName, workerStatus, isActive, now, id);
       }
 
       const statusChanged = existing.worker_status !== workerStatus;
