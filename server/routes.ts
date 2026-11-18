@@ -382,6 +382,64 @@ export function registerRoutes(app: Express): void {
     res.status(201).json({request: mapRequestRow(created)});
   });
 
+  // Public QR status report from nursing staff. This records feedback without changing the worker's task status.
+  app.post('/api/public/nursing-status-reports', (req: Request, res: Response) => {
+    const departmentId = sanitizeText(req.body?.departmentId, 64);
+    const status = sanitizeText(req.body?.status, 80);
+    const location = sanitizeText(req.body?.location, 120);
+    const note = sanitizeText(req.body?.note, 400);
+    const allowedStatuses = ['العامل متأخر ولم يحضر', 'تم إنجاز المهمة', 'لم يتم إنجاز المهمة بعد'];
+    if (!departmentId || !allowedStatuses.includes(status)) {
+      res.status(400).json({error: 'يرجى تحديد القسم وحالة العامل أو المهمة.'});
+      return;
+    }
+    const dept = db.prepare('SELECT id, name, is_active FROM departments WHERE id = ?').get(departmentId) as
+      | {id: string; name: string; is_active: number}
+      | undefined;
+    if (!dept || dept.is_active !== 1) {
+      res.status(404).json({error: 'القسم غير موجود أو غير نشط.'});
+      return;
+    }
+    const id = `NUR-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    const now = new Date().toISOString();
+    db.prepare(
+      'INSERT INTO nursing_status_reports (id, department_id, status, location, note, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(id, departmentId, status, location, note, now);
+    writeAuditLog({
+      actorId: null,
+      actorName: 'طاقم التمريض عبر رمز QR',
+      actorRole: 'qr_form',
+      action: 'تسجيل بلاغ حالة عامل أو مهمة من التمريض',
+      entityType: 'nursing_status_report',
+      entityId: id,
+      details: `${dept.name} · ${status}${location ? ` · الموقع: ${location}` : ''}${note ? ` · ملاحظة: ${note}` : ''}`,
+    });
+    res.status(201).json({
+      report: {id, departmentId, departmentName: dept.name, status, location, note, createdAt: now},
+    });
+  });
+
+  // Admin and supervisor review of nursing QR status reports.
+  app.get('/api/nursing-status-reports', requireAuth, requireRole(['admin', 'supervisor']), (_req: AuthenticatedRequest, res: Response) => {
+    const rows = db.prepare(
+      `SELECT n.id, n.department_id, d.name AS department_name, n.status, n.location, n.note, n.created_at
+       FROM nursing_status_reports n JOIN departments d ON d.id = n.department_id
+       ORDER BY n.created_at DESC LIMIT 100`,
+    ).all() as Array<{
+      id: string; department_id: string; department_name: string; status: string;
+      location: string; note: string; created_at: string;
+    }>;
+    res.json({reports: rows.map((row) => ({
+      id: row.id,
+      departmentId: row.department_id,
+      departmentName: row.department_name,
+      status: row.status,
+      location: row.location,
+      note: row.note,
+      createdAt: row.created_at,
+    }))});
+  });
+
   // Authenticated requests listing (strict server-side RBAC filtering!)
   app.get('/api/requests', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
