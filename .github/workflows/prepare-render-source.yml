@@ -19,9 +19,14 @@ jobs:
       - name: Preserve current account-management updates
         run: |
           mkdir -p /tmp/imc-preserve
+          mkdir -p /tmp/imc-preserve/components
           cp server/routes.ts /tmp/imc-preserve/routes.ts
+          cp server/db.ts /tmp/imc-preserve/db.ts
           cp src/api.ts /tmp/imc-preserve/api.ts
+          cp src/types.ts /tmp/imc-preserve/types.ts
+          cp src/App.tsx /tmp/imc-preserve/App.tsx
           cp src/components/AdminManagementView.tsx /tmp/imc-preserve/AdminManagementView.tsx
+          cp src/components/ShiftHandoversView.tsx /tmp/imc-preserve/ShiftHandoversView.tsx
       - name: Unpack application source
         run: |
           unzip -o IMC-Clean-Manager-APK-Ready.zip -d .
@@ -31,8 +36,12 @@ jobs:
       - name: Restore account-management updates after ZIP extraction
         run: |
           cp /tmp/imc-preserve/routes.ts server/routes.ts
+          cp /tmp/imc-preserve/db.ts server/db.ts
           cp /tmp/imc-preserve/api.ts src/api.ts
+          cp /tmp/imc-preserve/types.ts src/types.ts
+          cp /tmp/imc-preserve/App.tsx src/App.tsx
           cp /tmp/imc-preserve/AdminManagementView.tsx src/components/AdminManagementView.tsx
+          cp /tmp/imc-preserve/ShiftHandoversView.tsx src/components/ShiftHandoversView.tsx
       - name: Align esbuild with Vite 8
         run: |
           npm pkg set 'devDependencies.esbuild=^0.28.2'
