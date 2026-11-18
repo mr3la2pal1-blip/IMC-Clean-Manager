@@ -55,6 +55,18 @@ export interface CleaningRequest {
   updatedAt: string;
 }
 
+export type NursingStatusChoice = 'العامل متأخر ولم يحضر' | 'تم إنجاز المهمة' | 'لم يتم إنجاز المهمة بعد';
+
+export interface NursingStatusReport {
+  id: string;
+  departmentId: string;
+  departmentName: string;
+  status: NursingStatusChoice;
+  location: string;
+  note: string;
+  createdAt: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   actorId: string | null;
