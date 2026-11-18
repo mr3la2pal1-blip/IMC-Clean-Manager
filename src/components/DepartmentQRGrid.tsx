@@ -9,6 +9,7 @@ interface DepartmentQRGridProps {
   showAdminToggle?: boolean;
   onToggleDeptActive?: (dept: Department) => void;
   onRenameDepartment?: (dept: Department, name: string) => Promise<void>;
+  onUpdateDepartmentLocation?: (dept: Department, location: string) => Promise<void>;
 }
 
 export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
@@ -17,6 +18,7 @@ export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
   showAdminToggle = false,
   onToggleDeptActive,
   onRenameDepartment,
+  onUpdateDepartmentLocation,
 }) => {
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const isDevPreview =
@@ -95,6 +97,7 @@ export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
               onOpenForm={onOpenForm}
               showAdminRename={showAdminToggle}
               onRenameDepartment={onRenameDepartment}
+              onUpdateDepartmentLocation={onUpdateDepartmentLocation}
             />
             {showAdminToggle && onToggleDeptActive && (
               <div className="flex justify-end px-1 no-print">
