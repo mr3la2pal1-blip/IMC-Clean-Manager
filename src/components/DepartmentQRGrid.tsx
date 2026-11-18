@@ -16,6 +16,7 @@ export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
   onOpenForm,
   showAdminToggle = false,
   onToggleDeptActive,
+  onRenameDepartment,
 }) => {
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const isDevPreview =
