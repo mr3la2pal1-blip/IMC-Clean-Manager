@@ -8,15 +8,15 @@ export const PWAInstallButton: React.FC = () => {
   return (
     <div className="flex items-center gap-2 shrink-0">
       <a
-        href="/api/project-zip"
-        download="IMC-Clean-Manager.zip"
+        href="https://github.com/mr3la2pal1-blip/IMC-Clean-Manager/releases/latest/download/app-debug.apk"
+        download="IMC-Clean-Manager.apk"
         target="_blank"
         rel="noopener noreferrer"
         className="inline-flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-800 hover:bg-teal-100 transition-colors whitespace-nowrap shrink-0"
-        title="تنزيل ملف المشروع بصيغة ZIP"
+        title="تنزيل تطبيق أندرويد بصيغة APK"
       >
         <Download className="w-4 h-4 shrink-0" />
-        <span>تنزيل التطبيق (ZIP)</span>
+        <span>تنزيل التطبيق (APK)</span>
       </a>
 
       {!isInstalled && isInstallable && (
