@@ -383,6 +383,65 @@ export function registerRoutes(app: Express): void {
     res.status(201).json({request: mapRequestRow(created)});
   });
 
+  // Public nursing feedback about cleaning staff performance.
+  app.post('/api/public/nursing-performance-ratings', (req: Request, res: Response) => {
+    const departmentId = sanitizeText(req.body?.departmentId, 64);
+    const requestId = sanitizeText(req.body?.requestId, 64);
+    const location = sanitizeText(req.body?.location, 120);
+    const rating = sanitizeText(req.body?.rating, 40);
+    const reason = sanitizeText(req.body?.reason, 500);
+    const allowedRatings = ['ممتاز', 'جيد', 'غير راضٍ عن الأداء'];
+    if (!departmentId || !allowedRatings.includes(rating)) {
+      res.status(400).json({error: 'يرجى اختيار تقييم أداء عامل النظافة.'});
+      return;
+    }
+    if (rating === 'غير راضٍ عن الأداء' && !reason.trim()) {
+      res.status(400).json({error: 'يرجى كتابة المشكلة أو سبب عدم الرضا.'});
+      return;
+    }
+    const dept = db.prepare('SELECT id, name, is_active FROM departments WHERE id = ?').get(departmentId) as
+      | {id: string; name: string; is_active: number}
+      | undefined;
+    if (!dept || dept.is_active !== 1) {
+      res.status(404).json({error: 'القسم غير موجود أو غير نشط.'});
+      return;
+    }
+    if (requestId) {
+      const request = db.prepare('SELECT id, department_id FROM cleaning_requests WHERE id = ?').get(requestId) as
+        | {id: string; department_id: string}
+        | undefined;
+      if (!request || request.department_id !== departmentId) {
+        res.status(400).json({error: 'الطلب المرتبط غير صحيح لهذا القسم.'});
+        return;
+      }
+    }
+    const id = `RATE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    const now = new Date().toISOString();
+    db.prepare(
+      'INSERT INTO nursing_performance_ratings (id, department_id, request_id, location, rating, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, departmentId, requestId || null, location, rating, reason, now);
+    writeAuditLog({
+      actorId: null,
+      actorName: 'طاقم التمريض عبر رمز QR',
+      actorRole: 'qr_form',
+      action: 'تقييم أداء عامل النظافة',
+      entityType: 'nursing_performance_rating',
+      entityId: id,
+      details: `${dept.name} · ${rating}${location ? ` · الموقع: ${location}` : ''}${reason ? ` · السبب: ${reason}` : ''}${requestId ? ` · الطلب: ${requestId}` : ''}`,
+    });
+    res.status(201).json({rating: {id, departmentId, departmentName: dept.name, requestId: requestId || null, location, rating, reason, createdAt: now}});
+  });
+
+  // Admin and supervisor review of nursing performance ratings.
+  app.get('/api/nursing-performance-ratings', requireAuth, requireRole(['admin', 'supervisor']), (_req: AuthenticatedRequest, res: Response) => {
+    const rows = db.prepare(
+      `SELECT p.id, p.department_id, d.name AS department_name, p.request_id, p.location, p.rating, p.reason, p.created_at
+       FROM nursing_performance_ratings p JOIN departments d ON d.id = p.department_id
+       ORDER BY p.created_at DESC LIMIT 150`,
+    ).all() as Array<{id: string; department_id: string; department_name: string; request_id: string | null; location: string; rating: string; reason: string; created_at: string}>;
+    res.json({ratings: rows.map((row) => ({id: row.id, departmentId: row.department_id, departmentName: row.department_name, requestId: row.request_id, location: row.location, rating: row.rating, reason: row.reason, createdAt: row.created_at}))});
+  });
+
   // Public QR status report from nursing staff. This records feedback without changing the worker's task status.
   app.post('/api/public/nursing-status-reports', (req: Request, res: Response) => {
     const departmentId = sanitizeText(req.body?.departmentId, 64);
