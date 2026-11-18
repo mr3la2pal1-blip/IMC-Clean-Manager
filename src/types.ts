@@ -115,6 +115,24 @@ export interface WorkerShiftRecord {
   createdAt: string;
 }
 
+export interface ShiftHandoverRecord {
+  id: string;
+  fromWorkerId: string;
+  fromWorkerName: string;
+  toWorkerId: string;
+  toWorkerName: string;
+  shiftDate: string;
+  shiftType: string;
+  outgoingNotes: string;
+  pendingTasks: Array<{id:string;department_id:string;room_or_location:string;request_type:string;priority:string;status:string;created_at:string}>;
+  status: 'بانتظار التأكيد' | 'تم الاستلام';
+  incomingNotes: string;
+  recordedByName: string;
+  confirmedByName: string | null;
+  createdAt: string;
+  confirmedAt: string | null;
+}
+
 export interface ReportData {
   period: 'daily' | 'weekly';
   startDate: string;
