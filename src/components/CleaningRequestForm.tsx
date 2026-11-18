@@ -173,7 +173,9 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
           </div>
         </dl>
 
-        <NursingPerformanceRatingForm departmentId={submittedRequest.departmentId} requestId={submittedRequest.id} location={submittedRequest.roomOrLocation} />
+        {!isAuthenticated && initialDeptId && (
+          <NursingPerformanceRatingForm departmentId={submittedRequest.departmentId} requestId={submittedRequest.id} location={submittedRequest.roomOrLocation} />
+        )}
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <button
@@ -452,7 +454,7 @@ const NursingPerformanceRatingForm: React.FC<{departmentId: string; requestId?: 
     <form onSubmit={submit} className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3">
       <div>
         <h3 className="text-base font-bold text-slate-900">قيّم أداء عامل النظافة</h3>
-        <p className="mt-1 text-xs text-slate-600">رأيك يساعد الإدارة على متابعة جودة الخدمة وتحسينها.</p>
+        <p className="mt-1 text-xs text-slate-600">يرجى إرسال التقييم بعد انتهاء عامل النظافة من تنفيذ المهمة.</p>
       </div>
       {message && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{message}</p>}
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
