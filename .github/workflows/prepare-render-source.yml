@@ -16,12 +16,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: true
+      - name: Preserve current account-management updates
+        run: |
+          mkdir -p /tmp/imc-preserve
+          cp server/routes.ts /tmp/imc-preserve/routes.ts
+          cp src/api.ts /tmp/imc-preserve/api.ts
+          cp src/components/AdminManagementView.tsx /tmp/imc-preserve/AdminManagementView.tsx
       - name: Unpack application source
         run: |
           unzip -o IMC-Clean-Manager-APK-Ready.zip -d .
           test -f package.json
           test -f server.ts
           test -f render.yaml
+      - name: Restore account-management updates after ZIP extraction
+        run: |
+          cp /tmp/imc-preserve/routes.ts server/routes.ts
+          cp /tmp/imc-preserve/api.ts src/api.ts
+          cp /tmp/imc-preserve/AdminManagementView.tsx src/components/AdminManagementView.tsx
       - name: Align esbuild with Vite 8
         run: |
           npm pkg set 'devDependencies.esbuild=^0.28.2'
