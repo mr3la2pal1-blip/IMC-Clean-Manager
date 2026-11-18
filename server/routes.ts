@@ -1388,19 +1388,54 @@ export function registerRoutes(app: Express): void {
     res.json({ok:true,status:'تم الاستلام',confirmedAt:now});
   });
 
-  // Daily & Weekly Reports (Supervisor & Admin)
+  // Worker notes and incident history (Admin & Supervisor)
+  app.get('/api/worker-notes', requireAuth, requireRole(['admin', 'supervisor']), (_req: AuthenticatedRequest, res: Response) => {
+    const rows = db.prepare(`SELECT n.id, n.worker_id, w.name AS worker_name, n.note_type, n.details, u.name AS created_by_name, n.created_at
+      FROM worker_notes n JOIN users w ON w.id = n.worker_id JOIN users u ON u.id = n.created_by_id
+      ORDER BY n.created_at DESC LIMIT 300`).all() as Array<{id:string;worker_id:string;worker_name:string;note_type:string;details:string;created_by_name:string;created_at:string}>;
+    res.json({notes: rows.map(n => ({id:n.id, workerId:n.worker_id, workerName:n.worker_name, noteType:n.note_type, details:n.details, createdByName:n.created_by_name, createdAt:n.created_at}))});
+  });
+
+  app.post('/api/worker-notes', requireAuth, requireRole(['admin', 'supervisor']), (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.user!;
+    const workerId = sanitizeText(req.body?.workerId, 64);
+    const noteType = sanitizeText(req.body?.noteType, 30);
+    const details = sanitizeText(req.body?.details, 1000);
+    if (!['تأخير', 'شكوى', 'ملاحظة', 'إشادة'].includes(noteType) || details.length < 3) { res.status(400).json({error:'يرجى تحديد نوع الملاحظة وكتابة تفاصيل واضحة.'}); return; }
+    const worker = db.prepare("SELECT id, name FROM users WHERE id = ? AND role = 'worker'").get(workerId) as {id:string;name:string}|undefined;
+    if (!worker) { res.status(404).json({error:'العامل غير موجود.'}); return; }
+    const id = `WNOTE-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
+    const now = new Date().toISOString();
+    db.prepare('INSERT INTO worker_notes (id, worker_id, note_type, details, created_by_id, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, workerId, noteType, details, actor.id, now);
+    writeAuditLog({actorId:actor.id,actorName:actor.name,actorRole:actor.role,action:'تسجيل ملاحظة في ملف العامل',entityType:'worker_note',entityId:id,details:`${worker.name} · ${noteType} · ${details}`});
+    res.status(201).json({note:{id,workerId,workerName:worker.name,noteType,details,createdByName:actor.name,createdAt:now}});
+  });
+
+  // Admin-only point-in-time SQLite backup download. This exports a consistent database snapshot.
+  app.get('/api/admin/backup', requireAuth, requireRole(['admin']), (_req: AuthenticatedRequest, res: Response) => {
+    const snapshot = db.serialize();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    res.setHeader('Content-Type', 'application/vnd.sqlite3');
+    res.setHeader('Content-Disposition', `attachment; filename="imc-clean-backup-${stamp}.sqlite"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(snapshot);
+  });
+
+  // Daily, weekly and monthly reports (Supervisor & Admin)
   app.get(
     '/api/reports',
     requireAuth,
     requireRole(['admin', 'supervisor']),
     (req: AuthenticatedRequest, res: Response) => {
-      const period = req.query.period === 'weekly' ? 'weekly' : 'daily';
+      const period = req.query.period === 'monthly' ? 'monthly' : req.query.period === 'weekly' ? 'weekly' : 'daily';
       const rawDate = sanitizeText(req.query.date, 20);
       const endDateObj = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(`${rawDate}T23:59:59.999Z`) : new Date();
       const endDateIso = endDateObj.toISOString();
       const startDateObj = new Date(endDateObj);
       if (period === 'weekly') {
         startDateObj.setUTCDate(startDateObj.getUTCDate() - 6);
+      } else if (period === 'monthly') {
+        startDateObj.setUTCDate(1);
       }
       startDateObj.setUTCHours(0, 0, 0, 0);
       const startDateIso = startDateObj.toISOString();
