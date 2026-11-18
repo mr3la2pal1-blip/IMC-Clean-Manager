@@ -95,6 +95,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_nursing_status_reports_created ON nursing_status_reports(created_at);
   CREATE INDEX IF NOT EXISTS idx_nursing_status_reports_department ON nursing_status_reports(department_id);
 
+  CREATE TABLE IF NOT EXISTS nursing_performance_ratings (
+    id TEXT PRIMARY KEY,
+    department_id TEXT NOT NULL,
+    request_id TEXT,
+    location TEXT NOT NULL DEFAULT '',
+    rating TEXT NOT NULL CHECK (rating IN ('ممتاز', 'جيد', 'غير راضٍ عن الأداء')),
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (department_id) REFERENCES departments(id),
+    FOREIGN KEY (request_id) REFERENCES cleaning_requests(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_nursing_ratings_created ON nursing_performance_ratings(created_at);
+  CREATE INDEX IF NOT EXISTS idx_nursing_ratings_department ON nursing_performance_ratings(department_id);
+
   CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
     actor_id TEXT,
