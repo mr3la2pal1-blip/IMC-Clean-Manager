@@ -6,6 +6,8 @@ import type {
   ReportData,
   NursingStatusChoice,
   NursingStatusReport,
+  NursingPerformanceRating,
+  NursingPerformanceRatingChoice,
   RequestPriority,
   UserRole,
   WorkerShiftRecord,
@@ -161,6 +163,19 @@ export const api = {
   }),
 
   getNursingStatusReports: () => apiFetch<{reports: NursingStatusReport[]}>('/api/nursing-status-reports'),
+
+  submitNursingPerformanceRating: (payload: {
+    departmentId: string;
+    requestId?: string;
+    location?: string;
+    rating: NursingPerformanceRatingChoice;
+    reason?: string;
+  }) => apiFetch<{rating: NursingPerformanceRating}>('/api/public/nursing-performance-ratings', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+
+  getNursingPerformanceRatings: () => apiFetch<{ratings: NursingPerformanceRating[]}>('/api/nursing-performance-ratings'),
 
   getRequests: () => apiFetch<{requests: CleaningRequest[]}>('/api/requests'),
 
