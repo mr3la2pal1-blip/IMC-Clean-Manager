@@ -40,6 +40,48 @@ jobs:
               raise SystemExit("APK download button patch did not apply")
           p.write_text(s)
           PY
+      - name: Add shift-specific worker contact numbers
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          def patch(path, replacements):
+              p = Path(path)
+              content = p.read_text()
+              for old, new in replacements:
+                  if old not in content:
+                      raise SystemExit(f"Could not apply shift-phone patch to {path}: missing {old[:80]!r}")
+                  content = content.replace(old, new)
+              p.write_text(content)
+
+          patch("server/db.ts", [
+              ("    shift_type TEXT NOT NULL,\n    status TEXT NOT NULL CHECK", "    shift_type TEXT NOT NULL,\n    phone TEXT,\n    status TEXT NOT NULL CHECK"),
+              ("`);\n\nexport function getOrCreateSessionSecret()", "`);\n\n// Add shift-specific contact numbers to existing databases without losing records.\nconst workerShiftColumns = db.pragma('table_info(worker_shifts)') as Array<{name: string}>;\nif (!workerShiftColumns.some((column) => column.name === 'phone')) {\n  db.exec('ALTER TABLE worker_shifts ADD COLUMN phone TEXT');\n}\n\nexport function getOrCreateSessionSecret()"),
+          ])
+          patch("server/routes.ts", [
+              ("            shift_type: string;\n            status: 'نشط' | 'غائب' | 'مكتمل';", "            shift_type: string;\n            phone: string | null;\n            status: 'نشط' | 'غائب' | 'مكتمل';"),
+              ("          shiftType: s.shift_type,\n          status: s.status,", "          shiftType: s.shift_type,\n          phone: s.phone ?? null,\n          status: s.status,"),
+              ("      const shiftType = sanitizeText(req.body?.shiftType, 60);\n      const status", "      const shiftType = sanitizeText(req.body?.shiftType, 60);\n      const phone = sanitizeText(req.body?.phone, 40) || null;\n      const status"),
+              ("`INSERT INTO worker_shifts (id, worker_id, shift_date, shift_type, status, notes, recorded_by_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,\n        ).run(id, worker.id, shiftDate, shiftType, status, notes, actor.id, now);", "`INSERT INTO worker_shifts (id, worker_id, shift_date, shift_type, phone, status, notes, recorded_by_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,\n        ).run(id, worker.id, shiftDate, shiftType, phone, status, notes, actor.id, now);"),
+              ("db.prepare('UPDATE users SET shift_name = ?, worker_status = ?, updated_at = ? WHERE id = ?').run(\n          shiftType,\n          mappedWorkerStatus,\n          now,\n          worker.id,\n        );", "db.prepare('UPDATE users SET shift_name = ?, phone = COALESCE(?, phone), worker_status = ?, updated_at = ? WHERE id = ?').run(\n          shiftType,\n          phone,\n          mappedWorkerStatus,\n          now,\n          worker.id,\n        );"),
+              ("details: `${worker.name} · ${shiftDate} · ${shiftType} · ${status}`,", "details: `${worker.name} · ${shiftDate} · ${shiftType} · ${status}${phone ? ` · هاتف: ${phone}` : ''}`,"),
+              ("          shiftType,\n          status,\n          notes,\n          recordedByName", "          shiftType,\n          phone,\n          status,\n          notes,\n          recordedByName"),
+          ])
+          patch("src/types.ts", [
+              ("  shiftType: string;\n  status: 'نشط' | 'غائب' | 'مكتمل';", "  shiftType: string;\n  phone: string | null;\n  status: 'نشط' | 'غائب' | 'مكتمل';"),
+          ])
+          patch("src/api.ts", [
+              ("    shiftType: string;\n    status: 'نشط' | 'غائب' | 'مكتمل';\n    notes?: string;", "    shiftType: string;\n    phone?: string;\n    status: 'نشط' | 'غائب' | 'مكتمل';\n    notes?: string;"),
+          ])
+          patch("src/components/AdminManagementView.tsx", [
+              ("  const [shiftWorkerId, setShiftWorkerId] = useState('');", "  const [shiftWorkerId, setShiftWorkerId] = useState('');\n  const [shiftPhone, setShiftPhone] = useState('');"),
+              ("      if (firstWorker && !shiftWorkerId) {\n        setShiftWorkerId(firstWorker.id);\n      }", "      if (firstWorker && !shiftWorkerId) {\n        setShiftWorkerId(firstWorker.id);\n        setShiftPhone(firstWorker.phone || '');\n      }"),
+              ("        shiftType,\n        status: shiftStatus,\n        notes: shiftNotes.trim(),", "        shiftType,\n        phone: shiftPhone.trim(),\n        status: shiftStatus,\n        notes: shiftNotes.trim(),"),
+              ("                    onChange={(e) => setShiftWorkerId(e.target.value)}", "                    onChange={(e) => {\n                      const nextWorkerId = e.target.value;\n                      setShiftWorkerId(nextWorkerId);\n                      setShiftPhone(workerUsers.find((worker) => worker.id === nextWorkerId)?.phone || '');\n                    }}"),
+              ("                <div>\n                  <label htmlFor=\"sh-date\"", "                <div>\n                  <label htmlFor=\"sh-phone\" className=\"block text-xs font-semibold text-slate-700 mb-1\">\n                    رقم هاتف التواصل لهذه الوردية (واتساب)\n                  </label>\n                  <input\n                    id=\"sh-phone\"\n                    type=\"tel\"\n                    dir=\"ltr\"\n                    value={shiftPhone}\n                    onChange={(e) => setShiftPhone(e.target.value)}\n                    placeholder=\"مثال: 9705XXXXXXXX\"\n                    className=\"w-full rounded-lg border border-slate-300 px-3 py-2 text-sm\"\n                  />\n                  <p className=\"mt-1 text-[11px] text-slate-500\">يمكن تغييره مع كل وردية. عند الحفظ يصبح هذا رقم التواصل الحالي للعامل.</p>\n                </div>\n\n                <div>\n                  <label htmlFor=\"sh-date\""),
+              ("                      <th className=\"px-4 py-3\">الوردية</th>\n                      <th className=\"px-4 py-3\">الحالة</th>", "                      <th className=\"px-4 py-3\">الوردية</th>\n                      <th className=\"px-4 py-3\">رقم الهاتف</th>\n                      <th className=\"px-4 py-3\">الحالة</th>"),
+              ("                        <td className=\"px-4 py-3 text-xs text-slate-700\">{s.shiftType}</td>\n                        <td className=\"px-4 py-3 text-xs font-semibold\">", "                        <td className=\"px-4 py-3 text-xs text-slate-700\">{s.shiftType}</td>\n                        <td className=\"px-4 py-3 font-mono text-xs text-slate-600\" dir=\"ltr\">{s.phone || '—'}</td>\n                        <td className=\"px-4 py-3 text-xs font-semibold\">"),
+          ])
+          PY
       - name: Commit source files to repository root
         run: |
           git config user.name "github-actions[bot]"
