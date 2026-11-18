@@ -11,6 +11,7 @@ import type {
   RequestPriority,
   UserRole,
   WorkerShiftRecord,
+  ShiftHandoverRecord,
   WorkerStatus,
   WorkerSummary,
 } from './types.ts';
@@ -267,6 +268,12 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
+
+  getHandovers: () => apiFetch<{handovers: ShiftHandoverRecord[]}>('/api/handovers'),
+  createHandover: (payload: {fromWorkerId:string;toWorkerId:string;shiftDate:string;shiftType:string;outgoingNotes?:string}) =>
+    apiFetch<{handover:ShiftHandoverRecord}>('/api/handovers', {method:'POST', body:JSON.stringify(payload)}),
+  confirmHandover: (id:string, incomingNotes:string) =>
+    apiFetch<{ok:boolean;status:string;confirmedAt:string}>(`/api/handovers/${encodeURIComponent(id)}/confirm`, {method:'PATCH', body:JSON.stringify({incomingNotes})}),
 
   getShifts: (date?: string) =>
     apiFetch<{shifts: WorkerShiftRecord[]}>(`/api/shifts${date ? `?date=${encodeURIComponent(date)}` : ''}`),
