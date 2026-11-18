@@ -416,8 +416,8 @@ jobs:
           </section>"""
           s = replace_once(s, old_selector, new_selector, "single-select form control")
 
-          nursing_start = "        {!isAuthenticated && initialDeptId && (\n          <section className=\\"mt-6 rounded-xl border border-teal-200 bg-teal-50/60 p-4\\">"
-          nursing_end = "          </section>\n        )}\n\n        <form onSubmit={handleSubmit} className=\\"mt-6 space-y-5\">"
+          nursing_start = '        {!isAuthenticated && initialDeptId && (\n          <section className="mt-6 rounded-xl border border-teal-200 bg-teal-50/60 p-4">'
+          nursing_end = '          </section>\n        )}\n\n        <form onSubmit={handleSubmit} className="mt-6 space-y-5">'
           start = s.find(nursing_start)
           end = s.find(nursing_end, start)
           if start < 0 or end < 0:
