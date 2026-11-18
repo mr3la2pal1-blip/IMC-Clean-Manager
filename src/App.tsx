@@ -14,6 +14,7 @@ import {api, setStoredToken} from './api.ts';
 import {AdminManagementView} from './components/AdminManagementView.tsx';
 import {LoginView, SetupAdminView} from './components/AuthViews.tsx';
 import {LiveMonitorView} from './components/LiveMonitorView.tsx';
+import {WorkerNotesView} from './components/WorkerNotesView.tsx';
 import {CleaningRequestForm} from './components/CleaningRequestForm.tsx';
 import {DepartmentQRGrid} from './components/DepartmentQRGrid.tsx';
 import {OfflineIndicator} from './components/OfflineIndicator.tsx';
@@ -25,7 +26,7 @@ import {WorkerDashboard} from './components/WorkerDashboard.tsx';
 import {ROLE_LABELS} from './constants.ts';
 import type {AuthUser, CleaningRequest, Department, WorkerSummary} from './types.ts';
 
-type ActiveSection = 'dashboard' | 'live-monitor' | 'reports' | 'admin' | 'qr-codes' | 'new-request' | 'handovers';
+type ActiveSection = 'dashboard' | 'live-monitor' | 'reports' | 'admin' | 'qr-codes' | 'new-request' | 'handovers' | 'worker-notes';
 
 function getDeptParamFromUrl(): string | null {
   if (typeof window === 'undefined') return null;
@@ -231,6 +232,7 @@ export default function App() {
             {id: 'dashboard', label: 'لوحة الطلبات', icon: <ClipboardList className="w-4 h-4" />},
             {id: 'reports', label: 'التقارير', icon: <BarChart3 className="w-4 h-4" />},
             {id: 'handovers', label: 'تسليم واستلام الورديات', icon: <ClipboardList className="w-4 h-4" />},
+            {id: 'worker-notes', label: 'سجل ملاحظات العاملين', icon: <ClipboardList className="w-4 h-4" />},
             {id: 'qr-codes', label: 'رموز QR للأقسام', icon: <QrCode className="w-4 h-4" />},
             {id: 'new-request', label: 'طلب نظافة جديد', icon: <ShieldCheck className="w-4 h-4" />},
           ]
@@ -240,6 +242,7 @@ export default function App() {
             {id: 'live-monitor', label: 'المراقبة المباشرة', icon: <Activity className="w-4 h-4" />},
             {id: 'reports', label: 'التقارير', icon: <BarChart3 className="w-4 h-4" />},
             {id: 'handovers', label: 'تسليم واستلام الورديات', icon: <ClipboardList className="w-4 h-4" />},
+            {id: 'worker-notes', label: 'سجل ملاحظات العاملين', icon: <ClipboardList className="w-4 h-4" />},
             {id: 'new-request', label: 'نموذج طلب (QR)', icon: <QrCode className="w-4 h-4" />},
           ];
 
@@ -432,6 +435,8 @@ export default function App() {
             <ReportsView />
           ) : activeSection === 'handovers' ? (
             <ShiftHandoversView />
+          ) : activeSection === 'worker-notes' && (user.role === 'admin' || user.role === 'supervisor') ? (
+            <WorkerNotesView workers={workers} />
           ) : activeSection === 'admin' && user.role === 'admin' ? (
             <AdminManagementView
               departments={departments}
