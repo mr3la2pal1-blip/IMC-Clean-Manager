@@ -9,6 +9,9 @@ const config: CapacitorConfig = {
   },
   server: {
     androidScheme: 'https',
+    // Load the published HTTPS app inside the native Android shell.
+    url: 'https://imc-clean-manager-mhdt.onrender.com',
+    cleartext: false,
   },
 };
 
