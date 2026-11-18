@@ -280,7 +280,12 @@ jobs:
         )}
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">"""),
-              ("        </form>\\n      )}\\n    </div>", "        </form>\\n        </>\\n      )}\\n    </div>"),
+              ("""        </form>
+      )}
+    </div>""", """        </form>
+        </>
+      )}
+    </div>"""),
           ])
 
           patch("src/components/LiveMonitorView.tsx", [
