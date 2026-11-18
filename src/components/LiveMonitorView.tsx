@@ -1,6 +1,7 @@
 import {Activity, AlertTriangle, Building2, CheckCircle2, Clock3, RefreshCw, Users} from 'lucide-react';
 import React, {useEffect, useMemo, useState} from 'react';
 import {api, formatArabicDateTime} from '../api.ts';
+import {PRIORITY_SLA_MINUTES} from '../constants.ts';
 import type {CleaningRequest, Department, NursingPerformanceRating, NursingStatusReport, WorkerSummary} from '../types.ts';
 
 interface LiveMonitorViewProps {
@@ -55,7 +56,8 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
     const urgent = openRequests.filter((request) => request.priority === 'عاجل' || request.priority === 'عالي');
     const delayed = openRequests.filter((request) => {
       const created = new Date(request.createdAt).getTime();
-      return Number.isFinite(created) && Date.now() - created >= 60 * 60 * 1000;
+      const sla = PRIORITY_SLA_MINUTES[request.priority] ?? 60;
+      return Number.isFinite(created) && Date.now() - created >= sla * 60 * 1000;
     });
     const completed = requests.filter((request) => request.status === 'مكتمل');
     const activeWorkers = workers.filter((worker) => worker.isActive && worker.workerStatus === 'نشط');
@@ -208,13 +210,13 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h3 className="font-bold text-slate-900">المهام التي تجاوزت ساعة</h3>
+          <h3 className="font-bold text-slate-900">الطلبات التي تجاوزت زمن الاستجابة المستهدف</h3>
           <p className="mt-1 text-xs text-slate-500">مؤشر تنبيهي حسب وقت إنشاء الطلب، وليس حكماً نهائياً على التأخير</p>
           <div className="mt-4 flex items-center gap-3 rounded-lg bg-amber-50 p-4">
             <AlertTriangle className="h-7 w-7 shrink-0 text-amber-700" />
             <div>
               <p className="text-2xl font-bold tabular-nums text-amber-900">{metrics.delayed.length}</p>
-              <p className="text-xs text-amber-800">طلب مفتوح مضى على إنشائه 60 دقيقة أو أكثر</p>
+              <p className="text-xs text-amber-800">طلب مفتوح تجاوزت المدة المحددة حسب الأولوية (15 / 30 / 60 دقيقة)</p>
             </div>
           </div>
           {metrics.delayed.length > 0 && (
