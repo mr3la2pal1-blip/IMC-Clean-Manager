@@ -28,6 +28,9 @@ jobs:
           cp src/components/AdminManagementView.tsx /tmp/imc-preserve/AdminManagementView.tsx
           cp src/components/ShiftHandoversView.tsx /tmp/imc-preserve/ShiftHandoversView.tsx
           cp src/components/DepartmentQRGrid.tsx /tmp/imc-preserve/DepartmentQRGrid.tsx
+          cp src/components/LiveMonitorView.tsx /tmp/imc-preserve/LiveMonitorView.tsx
+          cp src/components/ReportsView.tsx /tmp/imc-preserve/ReportsView.tsx
+          cp src/components/WorkerNotesView.tsx /tmp/imc-preserve/WorkerNotesView.tsx
       - name: Unpack application source
         run: |
           unzip -o IMC-Clean-Manager-APK-Ready.zip -d .
@@ -44,6 +47,9 @@ jobs:
           cp /tmp/imc-preserve/AdminManagementView.tsx src/components/AdminManagementView.tsx
           cp /tmp/imc-preserve/ShiftHandoversView.tsx src/components/ShiftHandoversView.tsx
           cp /tmp/imc-preserve/DepartmentQRGrid.tsx src/components/DepartmentQRGrid.tsx
+          cp /tmp/imc-preserve/LiveMonitorView.tsx src/components/LiveMonitorView.tsx
+          cp /tmp/imc-preserve/ReportsView.tsx src/components/ReportsView.tsx
+          cp /tmp/imc-preserve/WorkerNotesView.tsx src/components/WorkerNotesView.tsx
       - name: Align esbuild with Vite 8
         run: |
           npm pkg set 'devDependencies.esbuild=^0.28.2'
