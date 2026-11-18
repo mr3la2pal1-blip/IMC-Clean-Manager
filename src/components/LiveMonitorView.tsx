@@ -68,7 +68,9 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
     const urgent = open.some((request) => request.priority === 'عاجل');
     const inProgress = open.some((request) => request.status === 'قيد التنفيذ');
     const status = urgent ? 'عاجل' : inProgress ? 'قيد التنفيذ' : open.length ? 'بانتظار التنظيف' : 'لا توجد طلبات مفتوحة';
-    return {department, related, open, status, urgent};
+    const completedCount = related.filter((request) => request.status === 'مكتمل').length;
+    const completionRate = related.length ? Math.round((completedCount / related.length) * 100) : 0;
+    return {department, related, open, status, urgent, completedCount, completionRate};
   }), [departments, requests]);
 
   const urgentRequests = metrics.urgent.slice(0, 8);
@@ -109,7 +111,7 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
           <p className="py-8 text-center text-sm text-slate-500">لا توجد أقسام نشطة حالياً.</p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {departmentRows.map(({department, related, open, status, urgent}) => (
+            {departmentRows.map(({department, related, open, status, urgent, completedCount, completionRate}) => (
               <div key={department.id} className="rounded-lg border border-slate-200 p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -121,7 +123,10 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
                 <div className="mt-3 flex gap-4 text-xs text-slate-600">
                   <span>إجمالي الطلبات: <strong className="tabular-nums">{related.length}</strong></span>
                   <span>مفتوحة: <strong className="tabular-nums">{open.length}</strong></span>
+                  <span>مكتملة: <strong className="tabular-nums">{completedCount}</strong></span>
                 </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-teal-600" style={{width: `${completionRate}%`}} /></div>
+                <p className="mt-1 text-left text-[11px] font-semibold text-teal-700">نسبة الإنجاز: {completionRate}%</p>
               </div>
             ))}
           </div>
@@ -225,7 +230,7 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
         </section>
       </div>
 
-      <p className="text-xs text-slate-400">هذه الشاشة تعرض بيانات النظام الحالية عند آخر تحديث. التحديث التلقائي والتنبيهات الفورية سيتم ربطهما في مرحلة مستقلة بعد إضافة آلية تحديث آمنة.</p>
+      <p className="text-xs text-slate-400">التنبيهات الظاهرة محسوبة من أوقات الطلبات وحدود الاستجابة المحددة للأولوية. يلزم إبقاء الشاشة مفتوحة وتحديث البيانات لمشاهدة المستجدات؛ لا ترسل هذه النسخة إشعارات خارج الموقع.</p>
     </div>
   );
 };
