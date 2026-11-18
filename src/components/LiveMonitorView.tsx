@@ -1,7 +1,7 @@
 import {Activity, AlertTriangle, Building2, CheckCircle2, Clock3, RefreshCw, Users} from 'lucide-react';
 import React, {useEffect, useMemo, useState} from 'react';
 import {api, formatArabicDateTime} from '../api.ts';
-import type {CleaningRequest, Department, NursingStatusReport, WorkerSummary} from '../types.ts';
+import type {CleaningRequest, Department, NursingPerformanceRating, NursingStatusReport, WorkerSummary} from '../types.ts';
 
 interface LiveMonitorViewProps {
   requests: CleaningRequest[];
@@ -22,6 +22,18 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
 }) => {
   const [nursingReports, setNursingReports] = useState<NursingStatusReport[]>([]);
   const [nursingReportsError, setNursingReportsError] = useState<string | null>(null);
+  const [performanceRatings, setPerformanceRatings] = useState<NursingPerformanceRating[]>([]);
+  const [ratingsError, setRatingsError] = useState<string | null>(null);
+
+  const loadPerformanceRatings = async () => {
+    try {
+      const result = await api.getNursingPerformanceRatings();
+      setPerformanceRatings(result.ratings);
+      setRatingsError(null);
+    } catch (error) {
+      setRatingsError(error instanceof Error ? error.message : 'تعذر تحميل تقييمات الأداء');
+    }
+  };
 
   const loadNursingReports = async () => {
     try {
@@ -35,6 +47,7 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
 
   useEffect(() => {
     void loadNursingReports();
+    void loadPerformanceRatings();
   }, []);
 
   const metrics = useMemo(() => {
@@ -70,7 +83,7 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
           </div>
           <p className="mt-1 text-sm text-slate-500">ملخص تشغيلي من الطلبات والعمال والأقسام المسجلة في النظام</p>
         </div>
-        <button type="button" onClick={() => { onRefresh(); void loadNursingReports(); }} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+        <button type="button" onClick={() => { onRefresh(); void loadNursingReports(); void loadPerformanceRatings(); }} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           تحديث البيانات
         </button>
@@ -112,6 +125,33 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
               </div>
             ))}
           </div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-indigo-200 bg-white p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-slate-900">تقييمات التمريض لأداء عمال النظافة</h3>
+            <p className="mt-1 text-xs text-slate-500">آخر التقييمات الواردة عبر QR، مع أسباب عدم الرضا</p>
+          </div>
+          <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-800">{performanceRatings.length} تقييم</span>
+        </div>
+        {ratingsError ? <p className="py-4 text-sm text-red-700">{ratingsError}</p> : performanceRatings.length === 0 ? (
+          <p className="py-6 text-center text-sm text-slate-500">لا توجد تقييمات مسجلة حتى الآن.</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-slate-100">
+            {performanceRatings.slice(0, 15).map((item) => (
+              <li key={item.id} className="flex flex-wrap items-start justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900">{item.departmentName} · {item.rating}</p>
+                  {item.location && <p className="mt-1 text-xs text-slate-600">الموقع: {item.location}</p>}
+                  {item.requestId && <p className="mt-1 text-xs text-slate-500">رقم الطلب: {item.requestId}</p>}
+                  {item.reason && <p className="mt-1 rounded-md bg-amber-50 p-2 text-xs text-amber-900">سبب عدم الرضا: {item.reason}</p>}
+                </div>
+                <time className="shrink-0 text-xs text-slate-400">{formatArabicDateTime(item.createdAt)}</time>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 
