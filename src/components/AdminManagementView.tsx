@@ -302,6 +302,10 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
           </button>
         </div>
 
+        <a href="/api/admin/backup" className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3.5 py-2 text-xs font-semibold text-teal-800 hover:bg-teal-100 whitespace-nowrap" title="تنزيل نسخة احتياطية من قاعدة البيانات">
+          <Download className="h-4 w-4" />
+          <span>نسخة احتياطية للبيانات</span>
+        </a>
         {zipTicket ? (
           <a
             href={`/api/admin/project-zip?ticket=${encodeURIComponent(zipTicket)}`}
