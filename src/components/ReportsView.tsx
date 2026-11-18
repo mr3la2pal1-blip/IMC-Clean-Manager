@@ -127,7 +127,7 @@ export const ReportsView: React.FC = () => {
             className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-800 cursor-pointer"
           >
             <Printer className="w-4 h-4" />
-            <span>طباعة التقرير</span>
+            <span>طباعة / حفظ PDF</span>
           </button>
         </div>
       </div>
@@ -148,7 +148,7 @@ export const ReportsView: React.FC = () => {
           <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
               <h2 className="text-base font-bold text-slate-900">
-                ملخص الأداء التشغيلي ({report.period === 'daily' ? 'يومي' : 'أسبوعي'})
+                ملخص الأداء التشغيلي ({report.period === 'daily' ? 'يومي' : report.period === 'weekly' ? 'أسبوعي' : 'شهري'})
               </h2>
               <span className="text-xs text-slate-500 tabular-nums">
                 الفترة: {report.startDate} إلى {report.endDate}
