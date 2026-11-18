@@ -82,6 +82,19 @@ db.exec(`
     FOREIGN KEY (recorded_by_id) REFERENCES users(id)
   );
 
+  CREATE TABLE IF NOT EXISTS nursing_status_reports (
+    id TEXT PRIMARY KEY,
+    department_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('العامل متأخر ولم يحضر', 'تم إنجاز المهمة', 'لم يتم إنجاز المهمة بعد')),
+    location TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (department_id) REFERENCES departments(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_nursing_status_reports_created ON nursing_status_reports(created_at);
+  CREATE INDEX IF NOT EXISTS idx_nursing_status_reports_department ON nursing_status_reports(department_id);
+
   CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
     actor_id TEXT,
