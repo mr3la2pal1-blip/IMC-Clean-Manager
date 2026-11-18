@@ -1,0 +1,6 @@
+{
+  "name": "IMC Clean Manager",
+  "description": "نظام إدارة خدمات النظافة ومكافحة العدوى للمستشفيات",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
