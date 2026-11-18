@@ -221,6 +221,11 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
     await onRefreshGlobal();
   };
 
+  const handleUpdateDepartmentLocation = async (dept: Department, location: string) => {
+    await api.updateDepartment(dept.id, {floorOrWing: location});
+    await onRefreshGlobal();
+  };
+
   const handleToggleDeptActive = async (dept: Department) => {
     try {
       await api.updateDepartment(dept.id, {isActive: !dept.isActive});
@@ -506,6 +511,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
             showAdminToggle={true}
             onToggleDeptActive={handleToggleDeptActive}
             onRenameDepartment={handleRenameDepartment}
+            onUpdateDepartmentLocation={handleUpdateDepartmentLocation}
           />
         </div>
       )}
