@@ -1310,6 +1310,74 @@ export function registerRoutes(app: Express): void {
     },
   );
 
+  // Shift handover register (Admin & Supervisor). Workers do not need app accounts or access.
+  app.get('/api/handovers', requireAuth, requireRole(['admin', 'supervisor']), (_req: AuthenticatedRequest, res: Response) => {
+    const rows = db.prepare(`
+      SELECT h.*, fw.name AS from_worker_name, tw.name AS to_worker_name,
+             rb.name AS recorded_by_name, cb.name AS confirmed_by_name
+      FROM shift_handovers h
+      JOIN users fw ON fw.id = h.from_worker_id
+      JOIN users tw ON tw.id = h.to_worker_id
+      JOIN users rb ON rb.id = h.recorded_by_id
+      LEFT JOIN users cb ON cb.id = h.confirmed_by_id
+      ORDER BY h.created_at DESC LIMIT 200
+    `).all() as Array<any>;
+    res.json({handovers: rows.map((h) => ({
+      id: h.id, fromWorkerId: h.from_worker_id, fromWorkerName: h.from_worker_name,
+      toWorkerId: h.to_worker_id, toWorkerName: h.to_worker_name,
+      shiftDate: h.shift_date, shiftType: h.shift_type, outgoingNotes: h.outgoing_notes,
+      pendingTasks: JSON.parse(h.pending_tasks_json || '[]'), status: h.status,
+      incomingNotes: h.incoming_notes, recordedByName: h.recorded_by_name,
+      confirmedByName: h.confirmed_by_name, createdAt: h.created_at, confirmedAt: h.confirmed_at,
+    }))});
+  });
+
+  app.post('/api/handovers', requireAuth, requireRole(['admin', 'supervisor']), (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.user!;
+    const fromWorkerId = sanitizeText(req.body?.fromWorkerId, 64);
+    const toWorkerId = sanitizeText(req.body?.toWorkerId, 64);
+    const shiftDate = sanitizeText(req.body?.shiftDate, 20);
+    const shiftType = sanitizeText(req.body?.shiftType, 60);
+    const outgoingNotes = sanitizeText(req.body?.outgoingNotes, 1000);
+    if (!fromWorkerId || !toWorkerId || fromWorkerId === toWorkerId || !/^\\d{4}-\\d{2}-\\d{2}$/.test(shiftDate) || !shiftType) {
+      res.status(400).json({error: 'يرجى تحديد العاملين المختلفين وتاريخ ونوع الوردية.'}); return;
+    }
+    const workers = db.prepare("SELECT id, name FROM users WHERE id IN (?, ?) AND role = 'worker' AND is_active = 1").all(fromWorkerId, toWorkerId) as Array<{id:string;name:string}>;
+    if (workers.length !== 2) { res.status(400).json({error: 'يجب اختيار عاملين نشطين مختلفين.'}); return; }
+    const fromWorker = workers.find(w => w.id === fromWorkerId)!;
+    const toWorker = workers.find(w => w.id === toWorkerId)!;
+    const pendingTasks = db.prepare(`
+      SELECT id, department_id, room_or_location, request_type, priority, status, created_at
+      FROM cleaning_requests WHERE assigned_worker_id = ? AND status IN ('تم الإسناد', 'قيد التنفيذ')
+      ORDER BY CASE priority WHEN 'عاجل' THEN 1 WHEN 'عالي' THEN 2 ELSE 3 END, created_at ASC
+    `).all(fromWorkerId) as Array<{id:string;department_id:string;room_or_location:string;request_type:string;priority:string;status:string;created_at:string}>;
+    const id = `HND-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO shift_handovers
+      (id, from_worker_id, to_worker_id, shift_date, shift_type, outgoing_notes, pending_tasks_json, status, incoming_notes, recorded_by_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'بانتظار التأكيد', '', ?, ?)`
+    ).run(id, fromWorkerId, toWorkerId, shiftDate, shiftType, outgoingNotes, JSON.stringify(pendingTasks), actor.id, now);
+    writeAuditLog({actorId:actor.id, actorName:actor.name, actorRole:actor.role, action:'تسجيل تسليم وردية', entityType:'shift_handover', entityId:id,
+      details:`${fromWorker.name} إلى ${toWorker.name} · ${shiftDate} · ${shiftType} · طلبات معلقة: ${pendingTasks.length}${outgoingNotes ? ` · ${outgoingNotes}` : ''}`});
+    res.status(201).json({handover:{id,fromWorkerId,fromWorkerName:fromWorker.name,toWorkerId,toWorkerName:toWorker.name,shiftDate,shiftType,outgoingNotes,pendingTasks,status:'بانتظار التأكيد',incomingNotes:'',recordedByName:actor.name,confirmedByName:null,createdAt:now,confirmedAt:null}});
+  });
+
+  app.patch('/api/handovers/:id/confirm', requireAuth, requireRole(['admin', 'supervisor']), (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.user!;
+    const id = sanitizeText(req.params.id, 64);
+    const incomingNotes = sanitizeText(req.body?.incomingNotes, 1000);
+    const existing = db.prepare('SELECT id, status, from_worker_id, to_worker_id FROM shift_handovers WHERE id = ?').get(id) as
+      | {id:string;status:string;from_worker_id:string;to_worker_id:string} | undefined;
+    if (!existing) { res.status(404).json({error:'سجل التسليم غير موجود.'}); return; }
+    if (existing.status === 'تم الاستلام') { res.status(400).json({error:'تم تأكيد استلام هذه الوردية مسبقاً.'}); return; }
+    const now = new Date().toISOString();
+    db.prepare("UPDATE shift_handovers SET status = 'تم الاستلام', incoming_notes = ?, confirmed_by_id = ?, confirmed_at = ? WHERE id = ?")
+      .run(incomingNotes, actor.id, now, id);
+    writeAuditLog({actorId:actor.id,actorName:actor.name,actorRole:actor.role,action:'تأكيد استلام وردية',entityType:'shift_handover',entityId:id,
+      details:`تم تأكيد استلام الوردية من ${existing.from_worker_id} إلى ${existing.to_worker_id}${incomingNotes ? ` · ملاحظات: ${incomingNotes}` : ''}`});
+    res.json({ok:true,status:'تم الاستلام',confirmedAt:now});
+  });
+
   // Daily & Weekly Reports (Supervisor & Admin)
   app.get(
     '/api/reports',
