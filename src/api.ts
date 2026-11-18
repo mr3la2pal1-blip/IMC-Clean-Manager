@@ -254,6 +254,8 @@ export const api = {
     id: string,
     payload: {
       name?: string;
+      username?: string;
+      role?: UserRole;
       phone?: string | null;
       shiftName?: string | null;
       workerStatus?: WorkerStatus;
