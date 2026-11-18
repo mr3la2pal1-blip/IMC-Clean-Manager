@@ -1,4 +1,5 @@
 import {
+  Activity,
   BarChart3,
   ClipboardList,
   LogOut,
@@ -12,6 +13,7 @@ import React, {useCallback, useEffect, useState} from 'react';
 import {api, setStoredToken} from './api.ts';
 import {AdminManagementView} from './components/AdminManagementView.tsx';
 import {LoginView, SetupAdminView} from './components/AuthViews.tsx';
+import {LiveMonitorView} from './components/LiveMonitorView.tsx';
 import {CleaningRequestForm} from './components/CleaningRequestForm.tsx';
 import {DepartmentQRGrid} from './components/DepartmentQRGrid.tsx';
 import {OfflineIndicator} from './components/OfflineIndicator.tsx';
@@ -22,7 +24,7 @@ import {WorkerDashboard} from './components/WorkerDashboard.tsx';
 import {ROLE_LABELS} from './constants.ts';
 import type {AuthUser, CleaningRequest, Department, WorkerSummary} from './types.ts';
 
-type ActiveSection = 'dashboard' | 'reports' | 'admin' | 'qr-codes' | 'new-request';
+type ActiveSection = 'dashboard' | 'live-monitor' | 'reports' | 'admin' | 'qr-codes' | 'new-request';
 
 function getDeptParamFromUrl(): string | null {
   if (typeof window === 'undefined') return null;
@@ -233,6 +235,7 @@ export default function App() {
         : [
             {id: 'dashboard', label: 'لوحة الطلبات', icon: <ClipboardList className="w-4 h-4" />},
             {id: 'admin', label: 'إدارة الطاقم والأقسام', icon: <SlidersHorizontal className="w-4 h-4" />},
+            {id: 'live-monitor', label: 'المراقبة المباشرة', icon: <Activity className="w-4 h-4" />},
             {id: 'reports', label: 'التقارير', icon: <BarChart3 className="w-4 h-4" />},
             {id: 'new-request', label: 'نموذج طلب (QR)', icon: <QrCode className="w-4 h-4" />},
           ];
@@ -420,6 +423,8 @@ export default function App() {
                 setActiveSection('new-request');
               }}
             />
+          ) : activeSection === 'live-monitor' && user.role === 'admin' ? (
+            <LiveMonitorView requests={requests} workers={workers} departments={departments} loading={loadingData} onRefresh={() => loadWorkspaceData(user)} />
           ) : activeSection === 'reports' ? (
             <ReportsView />
           ) : activeSection === 'admin' && user.role === 'admin' ? (
