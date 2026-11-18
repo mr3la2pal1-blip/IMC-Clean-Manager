@@ -1,4 +1,4 @@
-import {AlertTriangle, Globe} from 'lucide-react';
+import {AlertTriangle, Check, Globe, Pencil, X} from 'lucide-react';
 import React, {useMemo, useState} from 'react';
 import type {Department} from '../types.ts';
 import {QRCodeBox} from './QRCodeBox.tsx';
@@ -8,6 +8,7 @@ interface DepartmentQRGridProps {
   onOpenForm: (deptId: string) => void;
   showAdminToggle?: boolean;
   onToggleDeptActive?: (dept: Department) => void;
+  onRenameDepartment?: (dept: Department, name: string) => Promise<void>;
 }
 
 export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
@@ -25,6 +26,10 @@ export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
   );
 
   const [qrBaseUrl, setQrBaseUrl] = useState<string>(currentOrigin);
+  const [editingDeptId, setEditingDeptId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [renameError, setRenameError] = useState('');
 
   return (
     <div className="space-y-4">
@@ -88,15 +93,57 @@ export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
         {departments.map((dept) => (
           <div key={dept.id} className="space-y-2">
             <QRCodeBox department={dept} baseUrl={qrBaseUrl} onOpenForm={onOpenForm} />
-            {showAdminToggle && onToggleDeptActive && (
-              <div className="flex items-center justify-end px-1 no-print">
-                <button
-                  type="button"
-                  onClick={() => onToggleDeptActive(dept)}
-                  className="text-xs font-semibold text-slate-600 hover:text-slate-900 underline cursor-pointer"
-                >
-                  {dept.isActive ? 'تعطيل القسم مؤقتاً' : 'إعادة تفعيل القسم'}
-                </button>
+            {showAdminToggle && (
+              <div className="space-y-2 px-1 no-print">
+                {editingDeptId === dept.id ? (
+                  <form
+                    className="flex flex-wrap items-center gap-2"
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      const nextName = editingName.trim();
+                      if (nextName.length < 2) { setRenameError('اسم القسم يجب أن يتكون من حرفين على الأقل.'); return; }
+                      if (!onRenameDepartment) return;
+                      setSavingName(true); setRenameError('');
+                      try {
+                        await onRenameDepartment(dept, nextName);
+                        setEditingDeptId(null); setEditingName('');
+                      } catch (error) {
+                        setRenameError(error instanceof Error ? error.message : 'تعذر تعديل اسم القسم.');
+                      } finally { setSavingName(false); }
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      value={editingName}
+                      maxLength={100}
+                      onChange={(event) => setEditingName(event.target.value)}
+                      aria-label="اسم القسم الجديد"
+                      className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                    <button type="submit" disabled={savingName} title="حفظ الاسم" className="inline-flex items-center gap-1 rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                      <Check className="h-4 w-4" /> حفظ
+                    </button>
+                    <button type="button" disabled={savingName} onClick={() => {setEditingDeptId(null);setEditingName('');setRenameError('');}} title="إلغاء" className="rounded-lg border border-slate-300 p-2 text-slate-600 disabled:opacity-50">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </form>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => {setEditingDeptId(dept.id);setEditingName(dept.name);setRenameError('');}}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-900 underline cursor-pointer"
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> تعديل اسم القسم
+                    </button>
+                    {onToggleDeptActive && (
+                      <button type="button" onClick={() => onToggleDeptActive(dept)} className="text-xs font-semibold text-slate-600 hover:text-slate-900 underline cursor-pointer">
+                        {dept.isActive ? 'تعطيل القسم مؤقتاً' : 'إعادة تفعيل القسم'}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {renameError && editingDeptId === dept.id && <p className="text-xs text-red-600">{renameError}</p>}
               </div>
             )}
           </div>
