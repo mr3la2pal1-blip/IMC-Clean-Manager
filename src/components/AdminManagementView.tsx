@@ -61,7 +61,6 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
 
   // Department modal state
   const [showDeptModal, setShowDeptModal] = useState(false);
-  const [editingDept, setEditingDept] = useState<Department | null>(null);
   const [dName, setDName] = useState('');
   const [dFloor, setDFloor] = useState('');
   const [dCode, setDCode] = useState('');
@@ -191,41 +190,17 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
     }
   };
 
-  const openCreateDept = () => {
-    setEditingDept(null);
-    setDName('');
-    setDFloor('');
-    setDCode('');
-    setShowDeptModal(true);
-  };
-
-  const openEditDept = (dept: Department) => {
-    setEditingDept(dept);
-    setDName(dept.name);
-    setDFloor(dept.floorOrWing);
-    setDCode('');
-    setShowDeptModal(true);
-  };
-
   const handleCreateDept = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingDept(true);
     setError(null);
     try {
-      if (editingDept) {
-        await api.updateDepartment(editingDept.id, {
-          name: dName.trim(),
-          floorOrWing: dFloor.trim(),
-        });
-      } else {
-        await api.createDepartment({
-          id: dCode.trim() || undefined,
-          name: dName.trim(),
-          floorOrWing: dFloor.trim(),
-        });
-      }
+      await api.createDepartment({
+        id: dCode.trim() || undefined,
+        name: dName.trim(),
+        floorOrWing: dFloor.trim(),
+      });
       setShowDeptModal(false);
-      setEditingDept(null);
       setDName('');
       setDFloor('');
       setDCode('');
@@ -502,7 +477,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
               </button>
               <button
                 type="button"
-                onClick={openCreateDept}
+                onClick={() => setShowDeptModal(true)}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-800 cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
@@ -516,7 +491,6 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
             onOpenForm={onOpenDeptForm}
             showAdminToggle={true}
             onToggleDeptActive={handleToggleDeptActive}
-            onEditDepartment={openEditDept}
           />
         </div>
       )}
@@ -854,14 +828,14 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
         </div>
       )}
 
-      {/* Create / Edit Department Modal */}
+      {/* Create Department Modal */}
       {showDeptModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
           <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-lg">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Building2 className="w-5 h-5 text-teal-700" />
-                <h3 className="text-base font-bold text-slate-900">{editingDept ? 'تعديل بيانات القسم' : 'إضافة قسم مستشفى جديد'}</h3>
+                <h3 className="text-base font-bold text-slate-900">إضافة قسم مستشفى جديد</h3>
               </div>
               <button
                 type="button"
@@ -900,7 +874,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
-              {!editingDept && <div>
+              <div>
                 <label htmlFor="d-code" className="block text-xs font-semibold text-slate-700 mb-1">
                   رمز القسم بالإنجليزية (اختياري لرابط QR)
                 </label>
@@ -913,7 +887,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
                   placeholder="dialysis"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
                 />
-              </div>}
+              </div>
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
