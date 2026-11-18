@@ -82,6 +82,29 @@ db.exec(`
     FOREIGN KEY (recorded_by_id) REFERENCES users(id)
   );
 
+  CREATE TABLE IF NOT EXISTS shift_handovers (
+    id TEXT PRIMARY KEY,
+    from_worker_id TEXT NOT NULL,
+    to_worker_id TEXT NOT NULL,
+    shift_date TEXT NOT NULL,
+    shift_type TEXT NOT NULL,
+    outgoing_notes TEXT NOT NULL DEFAULT '',
+    pending_tasks_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'بانتظار التأكيد' CHECK (status IN ('بانتظار التأكيد', 'تم الاستلام')),
+    incoming_notes TEXT NOT NULL DEFAULT '',
+    recorded_by_id TEXT NOT NULL,
+    confirmed_by_id TEXT,
+    created_at TEXT NOT NULL,
+    confirmed_at TEXT,
+    FOREIGN KEY (from_worker_id) REFERENCES users(id),
+    FOREIGN KEY (to_worker_id) REFERENCES users(id),
+    FOREIGN KEY (recorded_by_id) REFERENCES users(id),
+    FOREIGN KEY (confirmed_by_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_handovers_date ON shift_handovers(shift_date);
+  CREATE INDEX IF NOT EXISTS idx_handovers_status ON shift_handovers(status);
+
   CREATE TABLE IF NOT EXISTS nursing_status_reports (
     id TEXT PRIMARY KEY,
     department_id TEXT NOT NULL,
