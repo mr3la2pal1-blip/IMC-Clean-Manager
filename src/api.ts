@@ -244,6 +244,7 @@ export const api = {
     workerId: string;
     shiftDate: string;
     shiftType: string;
+    phone?: string;
     status: 'نشط' | 'غائب' | 'مكتمل';
     notes?: string;
   }) =>
