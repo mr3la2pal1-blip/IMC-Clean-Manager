@@ -1,4 +1,4 @@
-import {Check, Copy, ExternalLink, Printer} from 'lucide-react';
+import {Check, Copy, ExternalLink, Pencil, Printer, X} from 'lucide-react';
 import QRCode from 'qrcode';
 import React, {useEffect, useState} from 'react';
 import type {Department} from '../types.ts';
@@ -7,11 +7,17 @@ interface QRCodeBoxProps {
   department: Department;
   baseUrl?: string;
   onOpenForm?: (deptId: string) => void;
+  showAdminRename?: boolean;
+  onRenameDepartment?: (dept: Department, name: string) => Promise<void>;
 }
 
-export const QRCodeBox: React.FC<QRCodeBoxProps> = ({department, baseUrl, onOpenForm}) => {
+export const QRCodeBox: React.FC<QRCodeBoxProps> = ({department, baseUrl, onOpenForm, showAdminRename = false, onRenameDepartment}) => {
   const [dataUrl, setDataUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState(department.name);
+  const [savingName, setSavingName] = useState(false);
+  const [renameError, setRenameError] = useState('');
 
   const effectiveOrigin =
     (baseUrl && baseUrl.trim().replace(/\/+$/, '')) ||
@@ -56,8 +62,37 @@ export const QRCodeBox: React.FC<QRCodeBoxProps> = ({department, baseUrl, onOpen
     <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5">
       <div>
         <div className="flex items-start justify-between gap-2">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">{department.name}</h3>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {editingName ? (
+                <form className="flex min-w-0 flex-wrap items-center gap-1.5" onSubmit={async (event) => {
+                  event.preventDefault();
+                  const nextName = nameValue.trim();
+                  if (nextName.length < 2) { setRenameError('اسم القسم يجب أن يتكون من حرفين على الأقل.'); return; }
+                  if (!onRenameDepartment) return;
+                  setSavingName(true);
+                  setRenameError('');
+                  try {
+                    await onRenameDepartment(department, nextName);
+                    setEditingName(false);
+                  } catch (error) {
+                    setRenameError(error instanceof Error ? error.message : 'تعذر تعديل اسم القسم.');
+                  } finally {
+                    setSavingName(false);
+                  }
+                }}>
+                  <input autoFocus value={nameValue} maxLength={100} onChange={(event) => setNameValue(event.target.value)} aria-label="اسم القسم الجديد" className="w-36 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                  <button type="submit" disabled={savingName} className="rounded-md bg-teal-700 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">حفظ</button>
+                  <button type="button" disabled={savingName} onClick={() => {setEditingName(false);setNameValue(department.name);setRenameError('');}} title="إلغاء التعديل" className="rounded-md border border-slate-300 p-1 text-slate-600 disabled:opacity-50"><X className="h-3.5 w-3.5" /></button>
+                </form>
+              ) : (
+                <>
+                  <h3 className="text-base font-bold text-slate-900">{department.name}</h3>
+                  {showAdminRename && onRenameDepartment && <button type="button" onClick={() => {setNameValue(department.name);setRenameError('');setEditingName(true);}} className="inline-flex items-center gap-1 rounded-md border border-teal-200 px-2 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-50"><Pencil className="h-3 w-3" /> تعديل</button>}
+                </>
+              )}
+            </div>
+            {renameError && <p className="mt-1 text-xs text-red-600">{renameError}</p>}
             <p className="mt-0.5 text-xs text-slate-500">
               {department.floorOrWing} · رمز القسم:{' '}
               <span className="font-mono text-slate-700">{department.id}</span>
