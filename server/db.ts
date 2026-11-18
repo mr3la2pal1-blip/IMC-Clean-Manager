@@ -133,6 +133,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_nursing_ratings_created ON nursing_performance_ratings(created_at);
   CREATE INDEX IF NOT EXISTS idx_nursing_ratings_department ON nursing_performance_ratings(department_id);
 
+  CREATE TABLE IF NOT EXISTS worker_notes (
+    id TEXT PRIMARY KEY,
+    worker_id TEXT NOT NULL,
+    note_type TEXT NOT NULL CHECK (note_type IN ('تأخير', 'شكوى', 'ملاحظة', 'إشادة')),
+    details TEXT NOT NULL,
+    created_by_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (worker_id) REFERENCES users(id),
+    FOREIGN KEY (created_by_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_worker_notes_worker ON worker_notes(worker_id, created_at);
+
   CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
     actor_id TEXT,
