@@ -73,6 +73,7 @@ db.exec(`
     worker_id TEXT NOT NULL,
     shift_date TEXT NOT NULL,
     shift_type TEXT NOT NULL,
+    phone TEXT,
     status TEXT NOT NULL CHECK (status IN ('نشط', 'غائب', 'مكتمل')),
     notes TEXT NOT NULL DEFAULT '',
     recorded_by_id TEXT NOT NULL,
@@ -99,6 +100,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_requests_created ON cleaning_requests(created_at);
   CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
 `);
+
+// Add shift-specific contact numbers to existing databases without losing records.
+const workerShiftColumns = db.pragma('table_info(worker_shifts)') as Array<{name: string}>;
+if (!workerShiftColumns.some((column) => column.name === 'phone')) {
+  db.exec('ALTER TABLE worker_shifts ADD COLUMN phone TEXT');
+}
 
 export function getOrCreateSessionSecret(): string {
   if (process.env.SESSION_SECRET && process.env.SESSION_SECRET.length >= 32) {
