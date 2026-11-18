@@ -1068,7 +1068,6 @@ export function registerRoutes(app: Express): void {
             worker_name: string;
             shift_date: string;
             shift_type: string;
-            phone: string | null;
             status: 'نشط' | 'غائب' | 'مكتمل';
             notes: string;
             recorded_by_name: string;
@@ -1093,7 +1092,6 @@ export function registerRoutes(app: Express): void {
           workerName: s.worker_name,
           shiftDate: s.shift_date,
           shiftType: s.shift_type,
-          phone: s.phone ?? null,
           status: s.status,
           notes: s.notes,
           recordedByName: s.recorded_by_name,
@@ -1112,7 +1110,6 @@ export function registerRoutes(app: Express): void {
       const workerId = sanitizeText(req.body?.workerId, 64);
       const shiftDate = sanitizeText(req.body?.shiftDate, 20);
       const shiftType = sanitizeText(req.body?.shiftType, 60);
-      const phone = sanitizeText(req.body?.phone, 40) || null;
       const status = sanitizeText(req.body?.status, 20) as 'نشط' | 'غائب' | 'مكتمل';
       const notes = sanitizeText(req.body?.notes, 250);
 
@@ -1138,14 +1135,13 @@ export function registerRoutes(app: Express): void {
 
       const tx = db.transaction(() => {
         db.prepare(
-          `INSERT INTO worker_shifts (id, worker_id, shift_date, shift_type, phone, status, notes, recorded_by_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(id, worker.id, shiftDate, shiftType, phone, status, notes, actor.id, now);
+          `INSERT INTO worker_shifts (id, worker_id, shift_date, shift_type, status, notes, recorded_by_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(id, worker.id, shiftDate, shiftType, status, notes, actor.id, now);
 
         const mappedWorkerStatus: WorkerStatus = status === 'غائب' ? 'غائب' : 'نشط';
-        db.prepare('UPDATE users SET shift_name = ?, phone = COALESCE(?, phone), worker_status = ?, updated_at = ? WHERE id = ?').run(
+        db.prepare('UPDATE users SET shift_name = ?, worker_status = ?, updated_at = ? WHERE id = ?').run(
           shiftType,
-          phone,
           mappedWorkerStatus,
           now,
           worker.id,
@@ -1158,7 +1154,7 @@ export function registerRoutes(app: Express): void {
           action: 'تسجيل وردية عمل',
           entityType: 'shift',
           entityId: id,
-          details: `${worker.name} · ${shiftDate} · ${shiftType} · ${status}${phone ? ` · هاتف: ${phone}` : ''}`,
+          details: `${worker.name} · ${shiftDate} · ${shiftType} · ${status}`,
         });
       });
 
@@ -1171,7 +1167,6 @@ export function registerRoutes(app: Express): void {
           workerName: worker.name,
           shiftDate,
           shiftType,
-          phone,
           status,
           notes,
           recordedByName: actor.name,
