@@ -594,6 +594,11 @@ jobs:
                 )}
                 </>""", "rating section on public QR form")
 
+          patch("src/components/CleaningRequestForm.tsx", """        <NursingPerformanceRatingForm departmentId={submittedRequest.departmentId} requestId={submittedRequest.id} location={submittedRequest.roomOrLocation} />""", """        {!isAuthenticated && initialDeptId && (
+                  <NursingPerformanceRatingForm departmentId={submittedRequest.departmentId} requestId={submittedRequest.id} location={submittedRequest.roomOrLocation} />
+                )}""", "public-only rating form")
+          patch("src/components/CleaningRequestForm.tsx", """رأيك يساعد الإدارة على متابعة جودة الخدمة وتحسينها.""", """يرجى إرسال التقييم بعد انتهاء عامل النظافة من تنفيذ المهمة.""", "rating timing guidance")
+
           p = Path("src/components/CleaningRequestForm.tsx")
           s = p.read_text()
           if "const NursingPerformanceRatingForm:" not in s:
