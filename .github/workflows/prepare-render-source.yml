@@ -454,6 +454,273 @@ jobs:
           p.write_text(s)
           PY
 
+
+      - name: Add nursing QR performance ratings
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def patch(path, old, new, label):
+              p = Path(path)
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f"Could not apply performance-rating patch: missing {label}")
+              p.write_text(s.replace(old, new, 1))
+
+          patch("server/db.ts", """  CREATE TABLE IF NOT EXISTS audit_logs (""", """  CREATE TABLE IF NOT EXISTS nursing_performance_ratings (
+              id TEXT PRIMARY KEY,
+              department_id TEXT NOT NULL,
+              request_id TEXT,
+              location TEXT NOT NULL DEFAULT '',
+              rating TEXT NOT NULL CHECK (rating IN ('ممتاز', 'جيد', 'غير راضٍ عن الأداء')),
+              reason TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (department_id) REFERENCES departments(id),
+              FOREIGN KEY (request_id) REFERENCES cleaning_requests(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_nursing_ratings_created ON nursing_performance_ratings(created_at);
+            CREATE INDEX IF NOT EXISTS idx_nursing_ratings_department ON nursing_performance_ratings(department_id);
+
+            CREATE TABLE IF NOT EXISTS audit_logs (""", "ratings table")
+
+          patch("src/types.ts", """export interface AuditLogEntry {""", """export type NursingPerformanceRatingChoice = 'ممتاز' | 'جيد' | 'غير راضٍ عن الأداء';
+
+            export interface NursingPerformanceRating {
+              id: string;
+              departmentId: string;
+              departmentName: string;
+              requestId: string | null;
+              location: string;
+              rating: NursingPerformanceRatingChoice;
+              reason: string;
+              createdAt: string;
+            }
+
+            export interface AuditLogEntry {""", "ratings types")
+
+          patch("src/api.ts", """  NursingStatusReport,
+          RequestPriority,""", """  NursingStatusReport,
+          NursingPerformanceRating,
+          NursingPerformanceRatingChoice,
+          RequestPriority,""", "api imports")
+          patch("src/api.ts", """  getNursingStatusReports: () => apiFetch<{reports: NursingStatusReport[]}>('/api/nursing-status-reports'),""", """  getNursingStatusReports: () => apiFetch<{reports: NursingStatusReport[]}>('/api/nursing-status-reports'),
+
+            submitNursingPerformanceRating: (payload: {
+              departmentId: string;
+              requestId?: string;
+              location?: string;
+              rating: NursingPerformanceRatingChoice;
+              reason?: string;
+            }) => apiFetch<{rating: NursingPerformanceRating}>('/api/public/nursing-performance-ratings', {
+              method: 'POST',
+              body: JSON.stringify(payload),
+            }),
+
+            getNursingPerformanceRatings: () => apiFetch<{ratings: NursingPerformanceRating[]}>('/api/nursing-performance-ratings'),""", "ratings API methods")
+
+          route = """  // Public QR status report from nursing staff."""
+          patch("server/routes.ts", route, """  // Public nursing feedback about cleaning staff performance.
+            app.post('/api/public/nursing-performance-ratings', (req: Request, res: Response) => {
+              const departmentId = sanitizeText(req.body?.departmentId, 64);
+              const requestId = sanitizeText(req.body?.requestId, 64);
+              const location = sanitizeText(req.body?.location, 120);
+              const rating = sanitizeText(req.body?.rating, 40);
+              const reason = sanitizeText(req.body?.reason, 500);
+              const allowedRatings = ['ممتاز', 'جيد', 'غير راضٍ عن الأداء'];
+              if (!departmentId || !allowedRatings.includes(rating)) {
+                res.status(400).json({error: 'يرجى اختيار تقييم أداء عامل النظافة.'});
+                return;
+              }
+              if (rating === 'غير راضٍ عن الأداء' && !reason.trim()) {
+                res.status(400).json({error: 'يرجى كتابة المشكلة أو سبب عدم الرضا.'});
+                return;
+              }
+              const dept = db.prepare('SELECT id, name, is_active FROM departments WHERE id = ?').get(departmentId) as
+                | {id: string; name: string; is_active: number}
+                | undefined;
+              if (!dept || dept.is_active !== 1) {
+                res.status(404).json({error: 'القسم غير موجود أو غير نشط.'});
+                return;
+              }
+              if (requestId) {
+                const request = db.prepare('SELECT id, department_id FROM cleaning_requests WHERE id = ?').get(requestId) as
+                  | {id: string; department_id: string}
+                  | undefined;
+                if (!request || request.department_id !== departmentId) {
+                  res.status(400).json({error: 'الطلب المرتبط غير صحيح لهذا القسم.'});
+                  return;
+                }
+              }
+              const id = `RATE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+              const now = new Date().toISOString();
+              db.prepare(
+                'INSERT INTO nursing_performance_ratings (id, department_id, request_id, location, rating, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+              ).run(id, departmentId, requestId || null, location, rating, reason, now);
+              writeAuditLog({
+                actorId: null,
+                actorName: 'طاقم التمريض عبر رمز QR',
+                actorRole: 'qr_form',
+                action: 'تقييم أداء عامل النظافة',
+                entityType: 'nursing_performance_rating',
+                entityId: id,
+                details: `${dept.name} · ${rating}${location ? ` · الموقع: ${location}` : ''}${reason ? ` · السبب: ${reason}` : ''}${requestId ? ` · الطلب: ${requestId}` : ''}`,
+              });
+              res.status(201).json({rating: {id, departmentId, departmentName: dept.name, requestId: requestId || null, location, rating, reason, createdAt: now}});
+            });
+
+            // Admin and supervisor review of nursing performance ratings.
+            app.get('/api/nursing-performance-ratings', requireAuth, requireRole(['admin', 'supervisor']), (_req: AuthenticatedRequest, res: Response) => {
+              const rows = db.prepare(
+                `SELECT p.id, p.department_id, d.name AS department_name, p.request_id, p.location, p.rating, p.reason, p.created_at
+                 FROM nursing_performance_ratings p JOIN departments d ON d.id = p.department_id
+                 ORDER BY p.created_at DESC LIMIT 150`,
+              ).all() as Array<{id: string; department_id: string; department_name: string; request_id: string | null; location: string; rating: string; reason: string; created_at: string}>;
+              res.json({ratings: rows.map((row) => ({id: row.id, departmentId: row.department_id, departmentName: row.department_name, requestId: row.request_id, location: row.location, rating: row.rating, reason: row.reason, createdAt: row.created_at}))});
+            });
+
+            // Public QR status report from nursing staff.""", "public rating routes")
+
+          patch("src/components/CleaningRequestForm.tsx", """import type {CleaningRequest, Department, RequestPriority} from '../types.ts';""", """import type {CleaningRequest, Department, NursingPerformanceRatingChoice, RequestPriority} from '../types.ts';""", "form type import")
+          patch("src/components/CleaningRequestForm.tsx", """        <div className="mt-6 flex flex-wrap items-center gap-3">""", """        <NursingPerformanceRatingForm departmentId={submittedRequest.departmentId} requestId={submittedRequest.id} location={submittedRequest.roomOrLocation} />
+
+                <div className="mt-6 flex flex-wrap items-center gap-3">""", "rating after request submission")
+          patch("src/components/CleaningRequestForm.tsx", """          </div>
+                </form>
+                </>""", """          </div>
+                </form>
+                {initialDeptId && !isAuthenticated && (
+                  <NursingPerformanceRatingForm departmentId={departmentId} location={roomOrLocation} />
+                )}
+                </>""", "rating section on public QR form")
+
+          p = Path("src/components/CleaningRequestForm.tsx")
+          s = p.read_text()
+          if "const NursingPerformanceRatingForm:" not in s:
+              s += """
+
+            const NursingPerformanceRatingForm: React.FC<{departmentId: string; requestId?: string; location?: string}> = ({departmentId, requestId, location = ''}) => {
+              const [rating, setRating] = useState<NursingPerformanceRatingChoice | ''>('');
+              const [reason, setReason] = useState('');
+              const [sending, setSending] = useState(false);
+              const [message, setMessage] = useState<string | null>(null);
+              const [error, setError] = useState<string | null>(null);
+
+              const submit = async (event: React.FormEvent) => {
+                event.preventDefault();
+                setError(null);
+                if (!rating) { setError('يرجى اختيار التقييم.'); return; }
+                if (rating === 'غير راضٍ عن الأداء' && !reason.trim()) {
+                  setError('يرجى كتابة المشكلة أو سبب عدم الرضا.');
+                  return;
+                }
+                setSending(true);
+                try {
+                  await api.submitNursingPerformanceRating({departmentId, requestId, location: location.trim(), rating, reason: reason.trim()});
+                  setMessage('شكراً لك، تم تسجيل تقييمك وإرساله إلى الإدارة.');
+                  setRating('');
+                  setReason('');
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'تعذر إرسال التقييم.');
+                } finally {
+                  setSending(false);
+                }
+              };
+
+              return (
+                <form onSubmit={submit} className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">قيّم أداء عامل النظافة</h3>
+                    <p className="mt-1 text-xs text-slate-600">رأيك يساعد الإدارة على متابعة جودة الخدمة وتحسينها.</p>
+                  </div>
+                  {message && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{message}</p>}
+                  {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['ممتاز', 'جيد', 'غير راضٍ عن الأداء'] as NursingPerformanceRatingChoice[]).map((option) => (
+                      <button key={option} type="button" onClick={() => {setRating(option); setError(null);}}
+                        className={`rounded-lg border px-2 py-3 text-sm font-semibold transition-colors ${rating === option ? 'border-indigo-600 bg-white text-indigo-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700'}`}>
+                        {option === 'ممتاز' ? '⭐ ممتاز' : option === 'جيد' ? '👍 جيد' : '⚠️ غير راضٍ'}
+                      </button>
+                    ))}
+                  </div>
+                  {rating === 'غير راضٍ عن الأداء' && (
+                    <div>
+                      <label htmlFor="nursing-rating-reason" className="mb-1.5 block text-sm font-semibold text-slate-800">ما المشكلة أو سبب عدم الرضا؟ <span className="text-red-600">*</span></label>
+                      <textarea id="nursing-rating-reason" required rows={3} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)}
+                        placeholder="مثال: لم يتم تعقيم السرير، الأرضية غير نظيفة، تأخر العامل..."
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-600/20" />
+                    </div>
+                  )}
+                  <button type="submit" disabled={sending || !rating} className="w-full rounded-lg bg-indigo-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">
+                    {sending ? 'جاري إرسال التقييم...' : 'إرسال التقييم'}
+                  </button>
+                  <p className="text-[11px] text-slate-500">لا تكتب أسماء المرضى أو أي معلومات صحية في التقييم.</p>
+                </form>
+              );
+            };
+            """
+              p.write_text(s)
+
+          patch("src/components/LiveMonitorView.tsx", """import type {CleaningRequest, Department, NursingStatusReport, WorkerSummary} from '../types.ts';""", """import type {CleaningRequest, Department, NursingPerformanceRating, NursingStatusReport, WorkerSummary} from '../types.ts';""", "live types import")
+          patch("src/components/LiveMonitorView.tsx", """  const [nursingReportsError, setNursingReportsError] = useState<string | null>(null);""", """  const [nursingReportsError, setNursingReportsError] = useState<string | null>(null);
+              const [performanceRatings, setPerformanceRatings] = useState<NursingPerformanceRating[]>([]);
+              const [ratingsError, setRatingsError] = useState<string | null>(null);""", "ratings state")
+          patch("src/components/LiveMonitorView.tsx", """  const loadNursingReports = async () => {""", """  const loadPerformanceRatings = async () => {
+                try {
+                  const result = await api.getNursingPerformanceRatings();
+                  setPerformanceRatings(result.ratings);
+                  setRatingsError(null);
+                } catch (error) {
+                  setRatingsError(error instanceof Error ? error.message : 'تعذر تحميل تقييمات الأداء');
+                }
+              };
+
+              const loadNursingReports = async () => {""", "ratings loader")
+          patch("src/components/LiveMonitorView.tsx", """  useEffect(() => {
+                void loadNursingReports();
+              }, []);""", """  useEffect(() => {
+                void loadNursingReports();
+                void loadPerformanceRatings();
+              }, []);""", "ratings initial load")
+          patch("src/components/LiveMonitorView.tsx", """onClick={() => { onRefresh(); void loadNursingReports(); }}""", """onClick={() => { onRefresh(); void loadNursingReports(); void loadPerformanceRatings(); }}""", "ratings refresh")
+
+          rating_panel = """      <section className="rounded-xl border border-indigo-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-slate-900">تقييمات التمريض لأداء عمال النظافة</h3>
+                    <p className="mt-1 text-xs text-slate-500">آخر التقييمات الواردة عبر QR، مع أسباب عدم الرضا</p>
+                  </div>
+                  <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-800">{performanceRatings.length} تقييم</span>
+                </div>
+                {ratingsError ? <p className="py-4 text-sm text-red-700">{ratingsError}</p> : performanceRatings.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-slate-500">لا توجد تقييمات مسجلة حتى الآن.</p>
+                ) : (
+                  <ul className="mt-3 divide-y divide-slate-100">
+                    {performanceRatings.slice(0, 15).map((item) => (
+                      <li key={item.id} className="flex flex-wrap items-start justify-between gap-3 py-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900">{item.departmentName} · {item.rating}</p>
+                          {item.location && <p className="mt-1 text-xs text-slate-600">الموقع: {item.location}</p>}
+                          {item.requestId && <p className="mt-1 text-xs text-slate-500">رقم الطلب: {item.requestId}</p>}
+                          {item.reason && <p className="mt-1 rounded-md bg-amber-50 p-2 text-xs text-amber-900">سبب عدم الرضا: {item.reason}</p>}
+                        </div>
+                        <time className="shrink-0 text-xs text-slate-400">{formatArabicDateTime(item.createdAt)}</time>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+            """
+          patch("src/components/LiveMonitorView.tsx", """      <section className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-slate-900">آخر بلاغات التمريض عبر QR</h3>""", rating_panel + """      <section className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-slate-900">آخر بلاغات التمريض عبر QR</h3>""", "ratings dashboard panel")
+          PY
+
       - name: Commit source files to repository root
         run: |
           git config user.name "github-actions[bot]"
