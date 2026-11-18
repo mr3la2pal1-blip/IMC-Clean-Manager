@@ -1,4 +1,4 @@
-import {AlertTriangle, Globe} from 'lucide-react';
+import {AlertTriangle, Edit3, Globe} from 'lucide-react';
 import React, {useMemo, useState} from 'react';
 import type {Department} from '../types.ts';
 import {QRCodeBox} from './QRCodeBox.tsx';
@@ -8,6 +8,7 @@ interface DepartmentQRGridProps {
   onOpenForm: (deptId: string) => void;
   showAdminToggle?: boolean;
   onToggleDeptActive?: (dept: Department) => void;
+  onEditDepartment?: (dept: Department) => void;
 }
 
 export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
@@ -15,6 +16,7 @@ export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
   onOpenForm,
   showAdminToggle = false,
   onToggleDeptActive,
+  onEditDepartment,
 }) => {
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const isDevPreview =
@@ -88,8 +90,19 @@ export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
         {departments.map((dept) => (
           <div key={dept.id} className="space-y-2">
             <QRCodeBox department={dept} baseUrl={qrBaseUrl} onOpenForm={onOpenForm} />
-            {showAdminToggle && onToggleDeptActive && (
-              <div className="flex items-center justify-end px-1 no-print">
+            {showAdminToggle && (
+              <div className="flex flex-wrap items-center justify-end gap-4 px-1 no-print">
+                {onEditDepartment && (
+                  <button
+                    type="button"
+                    onClick={() => onEditDepartment(dept)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-900 underline cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    تعديل اسم وبيانات القسم
+                  </button>
+                )}
+                {onToggleDeptActive && (
                 <button
                   type="button"
                   onClick={() => onToggleDeptActive(dept)}
@@ -97,6 +110,7 @@ export const DepartmentQRGrid: React.FC<DepartmentQRGridProps> = ({
                 >
                   {dept.isActive ? 'تعطيل القسم مؤقتاً' : 'إعادة تفعيل القسم'}
                 </button>
+                )}
               </div>
             )}
           </div>
