@@ -4,6 +4,8 @@ import type {
   CleaningRequest,
   Department,
   ReportData,
+  NursingStatusChoice,
+  NursingStatusReport,
   RequestPriority,
   UserRole,
   WorkerShiftRecord,
@@ -147,6 +149,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  submitNursingStatusReport: (payload: {
+    departmentId: string;
+    status: NursingStatusChoice;
+    location?: string;
+    note?: string;
+  }) => apiFetch<{report: NursingStatusReport}>('/api/public/nursing-status-reports', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+
+  getNursingStatusReports: () => apiFetch<{reports: NursingStatusReport[]}>('/api/nursing-status-reports'),
 
   getRequests: () => apiFetch<{requests: CleaningRequest[]}>('/api/requests'),
 
