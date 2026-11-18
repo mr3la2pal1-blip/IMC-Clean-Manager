@@ -9,15 +9,20 @@ interface QRCodeBoxProps {
   onOpenForm?: (deptId: string) => void;
   showAdminRename?: boolean;
   onRenameDepartment?: (dept: Department, name: string) => Promise<void>;
+  onUpdateDepartmentLocation?: (dept: Department, location: string) => Promise<void>;
 }
 
-export const QRCodeBox: React.FC<QRCodeBoxProps> = ({department, baseUrl, onOpenForm, showAdminRename = false, onRenameDepartment}) => {
+export const QRCodeBox: React.FC<QRCodeBoxProps> = ({department, baseUrl, onOpenForm, showAdminRename = false, onRenameDepartment, onUpdateDepartmentLocation}) => {
   const [dataUrl, setDataUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(department.name);
   const [savingName, setSavingName] = useState(false);
   const [renameError, setRenameError] = useState('');
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [locationValue, setLocationValue] = useState(department.floorOrWing || '');
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [locationError, setLocationError] = useState('');
 
   const effectiveOrigin =
     (baseUrl && baseUrl.trim().replace(/\/+$/, '')) ||
@@ -93,10 +98,37 @@ export const QRCodeBox: React.FC<QRCodeBoxProps> = ({department, baseUrl, onOpen
               )}
             </div>
             {renameError && <p className="mt-1 text-xs text-red-600">{renameError}</p>}
-            <p className="mt-0.5 text-xs text-slate-500">
-              {department.floorOrWing} · رمز القسم:{' '}
-              <span className="font-mono text-slate-700">{department.id}</span>
-            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {editingLocation ? (
+                <form className="flex min-w-0 flex-wrap items-center gap-1.5" onSubmit={async (event) => {
+                  event.preventDefault();
+                  const nextLocation = locationValue.trim();
+                  if (!nextLocation) { setLocationError('يرجى إدخال عنوان القسم.'); return; }
+                  if (!onUpdateDepartmentLocation) return;
+                  setSavingLocation(true);
+                  setLocationError('');
+                  try {
+                    await onUpdateDepartmentLocation(department, nextLocation);
+                    setEditingLocation(false);
+                  } catch (error) {
+                    setLocationError(error instanceof Error ? error.message : 'تعذر تعديل عنوان القسم.');
+                  } finally {
+                    setSavingLocation(false);
+                  }
+                }}>
+                  <input autoFocus value={locationValue} maxLength={120} onChange={(event) => setLocationValue(event.target.value)} aria-label="عنوان القسم الجديد" placeholder="مثال: الطابق الثاني - جناح B" className="w-48 rounded-lg border border-slate-300 px-2 py-1 text-xs" />
+                  <button type="submit" disabled={savingLocation} className="rounded-md bg-teal-700 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50">حفظ</button>
+                  <button type="button" disabled={savingLocation} onClick={() => {setEditingLocation(false);setLocationValue(department.floorOrWing || '');setLocationError('');}} title="إلغاء التعديل" className="rounded-md border border-slate-300 p-1 text-slate-600 disabled:opacity-50"><X className="h-3.5 w-3.5" /></button>
+                </form>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-500">{department.floorOrWing || 'العنوان غير محدد'}</p>
+                  {showAdminRename && onUpdateDepartmentLocation && <button type="button" onClick={() => {setLocationValue(department.floorOrWing || '');setLocationError('');setEditingLocation(true);}} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"><Pencil className="h-3 w-3" /> تعديل العنوان</button>}
+                </>
+              )}
+              <span className="text-xs text-slate-400">· رمز القسم: <span className="font-mono text-slate-700">{department.id}</span></span>
+            </div>
+            {locationError && <p className="mt-1 text-xs text-red-600">{locationError}</p>}
           </div>
           <span
             className={`text-xs font-semibold ${
