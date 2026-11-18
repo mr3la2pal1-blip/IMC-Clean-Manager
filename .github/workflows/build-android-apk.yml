@@ -25,7 +25,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -36,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Point Android shell to the published website
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; const p='capacitor.config.ts'; let s=fs.readFileSync(p,'utf8'); s=s.replace(/server: \\{\\s*androidScheme: 'https',\\s*\\}/, \"server: { androidScheme: 'https', url: 'https://imc-clean-manager-mhdt.onrender.com', cleartext: false }\"); if (!s.includes('imc-clean-manager-mhdt.onrender.com')) process.exit(1); fs.writeFileSync(p,s);"
       - name: Build web assets
         run: npm run build
 
