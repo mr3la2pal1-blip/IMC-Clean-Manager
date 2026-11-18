@@ -83,6 +83,7 @@ export interface WorkerShiftRecord {
   workerName: string;
   shiftDate: string;
   shiftType: string;
+  phone: string | null;
   status: 'نشط' | 'غائب' | 'مكتمل';
   notes: string;
   recordedByName: string;

@@ -68,6 +68,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
 
   // Shift form state
   const [shiftWorkerId, setShiftWorkerId] = useState('');
+  const [shiftPhone, setShiftPhone] = useState('');
   const [shiftDate, setShiftDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [shiftType, setShiftType] = useState(SHIFT_OPTIONS[0]);
   const [shiftStatus, setShiftStatus] = useState<'نشط' | 'غائب' | 'مكتمل'>('نشط');
@@ -89,6 +90,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
       const firstWorker = usersRes.users.find((u) => u.role === 'worker');
       if (firstWorker && !shiftWorkerId) {
         setShiftWorkerId(firstWorker.id);
+        setShiftPhone(firstWorker.phone || '');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر تحميل بيانات الإدارة');
@@ -231,6 +233,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
         workerId: shiftWorkerId,
         shiftDate,
         shiftType,
+        phone: shiftPhone.trim(),
         status: shiftStatus,
         notes: shiftNotes.trim(),
       });
@@ -511,7 +514,11 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
                   <select
                     id="sh-worker"
                     value={shiftWorkerId}
-                    onChange={(e) => setShiftWorkerId(e.target.value)}
+                    onChange={(e) => {
+                      const nextWorkerId = e.target.value;
+                      setShiftWorkerId(nextWorkerId);
+                      setShiftPhone(workerUsers.find((worker) => worker.id === nextWorkerId)?.phone || '');
+                    }}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                   >
                     {workerUsers.map((w) => (
@@ -520,6 +527,22 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div>
+                  <label htmlFor="sh-phone" className="block text-xs font-semibold text-slate-700 mb-1">
+                    رقم هاتف التواصل لهذه الوردية (واتساب)
+                  </label>
+                  <input
+                    id="sh-phone"
+                    type="tel"
+                    dir="ltr"
+                    value={shiftPhone}
+                    onChange={(e) => setShiftPhone(e.target.value)}
+                    placeholder="مثال: 9705XXXXXXXX"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500">يمكن تغييره مع كل وردية. عند الحفظ يصبح هذا رقم التواصل الحالي للعامل.</p>
                 </div>
 
                 <div>
@@ -608,6 +631,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
                       <th className="px-4 py-3">التاريخ</th>
                       <th className="px-4 py-3">العامل</th>
                       <th className="px-4 py-3">الوردية</th>
+                      <th className="px-4 py-3">رقم الهاتف</th>
                       <th className="px-4 py-3">الحالة</th>
                       <th className="px-4 py-3">سجلت بواسطة</th>
                     </tr>
@@ -618,6 +642,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
                         <td className="px-4 py-3 font-mono text-xs tabular-nums">{s.shiftDate}</td>
                         <td className="px-4 py-3 font-semibold text-slate-900">{s.workerName}</td>
                         <td className="px-4 py-3 text-xs text-slate-700">{s.shiftType}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-slate-600" dir="ltr">{s.phone || '—'}</td>
                         <td className="px-4 py-3 text-xs font-semibold">
                           <span
                             className={
