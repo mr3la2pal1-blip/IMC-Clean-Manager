@@ -14,6 +14,7 @@ import type {
   ShiftHandoverRecord,
   WorkerStatus,
   WorkerSummary,
+  WorkerNoteRecord,
 } from './types.ts';
 
 const TOKEN_STORAGE_KEY = 'imc_clean_token';
@@ -291,7 +292,12 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  getReports: (period: 'daily' | 'weekly', date: string) =>
+  getWorkerNotes: () => apiFetch<{notes: WorkerNoteRecord[]}>('/api/worker-notes'),
+  createWorkerNote: (payload: {workerId:string;noteType:WorkerNoteRecord['noteType'];details:string}) =>
+    apiFetch<{note:WorkerNoteRecord}>('/api/worker-notes', {method:'POST', body:JSON.stringify(payload)}),
+  downloadBackup: () => `${API_BASE_URL}/api/admin/backup`,
+
+  getReports: (period: 'daily' | 'weekly' | 'monthly', date: string) =>
     apiFetch<ReportData>(`/api/reports?period=${period}&date=${encodeURIComponent(date)}`),
 
   getAuditLogs: () => apiFetch<{logs: AuditLogEntry[]}>('/api/admin/audit-logs'),
