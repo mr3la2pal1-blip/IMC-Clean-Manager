@@ -216,6 +216,11 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
     }
   };
 
+  const handleRenameDepartment = async (dept: Department, name: string) => {
+    await api.updateDepartment(dept.id, {name});
+    await onRefreshGlobal();
+  };
+
   const handleToggleDeptActive = async (dept: Department) => {
     try {
       await api.updateDepartment(dept.id, {isActive: !dept.isActive});
@@ -496,6 +501,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
             onOpenForm={onOpenDeptForm}
             showAdminToggle={true}
             onToggleDeptActive={handleToggleDeptActive}
+            onRenameDepartment={handleRenameDepartment}
           />
         </div>
       )}
