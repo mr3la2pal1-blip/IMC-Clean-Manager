@@ -1342,7 +1342,7 @@ export function registerRoutes(app: Express): void {
     if (!fromWorkerId || !toWorkerId || fromWorkerId === toWorkerId || !/^\\d{4}-\\d{2}-\\d{2}$/.test(shiftDate) || !shiftType) {
       res.status(400).json({error: 'يرجى تحديد العاملين المختلفين وتاريخ ونوع الوردية.'}); return;
     }
-    const workers = db.prepare("SELECT id, name FROM users WHERE id IN (?, ?) AND role = 'worker' AND is_active = 1").all(fromWorkerId, toWorkerId) as Array<{id:string;name:string}>;
+    const workers = db.prepare("SELECT id, name FROM users WHERE id IN (?, ?) AND role = 'worker' AND is_active = 1 AND worker_status = 'نشط'").all(fromWorkerId, toWorkerId) as Array<{id:string;name:string}>;
     if (workers.length !== 2) { res.status(400).json({error: 'يجب اختيار عاملين نشطين مختلفين.'}); return; }
     const fromWorker = workers.find(w => w.id === fromWorkerId)!;
     const toWorker = workers.find(w => w.id === toWorkerId)!;
@@ -1353,12 +1353,22 @@ export function registerRoutes(app: Express): void {
     `).all(fromWorkerId) as Array<{id:string;department_id:string;room_or_location:string;request_type:string;priority:string;status:string;created_at:string}>;
     const id = `HND-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const now = new Date().toISOString();
-    db.prepare(`INSERT INTO shift_handovers
-      (id, from_worker_id, to_worker_id, shift_date, shift_type, outgoing_notes, pending_tasks_json, status, incoming_notes, recorded_by_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'بانتظار التأكيد', '', ?, ?)`
-    ).run(id, fromWorkerId, toWorkerId, shiftDate, shiftType, outgoingNotes, JSON.stringify(pendingTasks), actor.id, now);
-    writeAuditLog({actorId:actor.id, actorName:actor.name, actorRole:actor.role, action:'تسجيل تسليم وردية', entityType:'shift_handover', entityId:id,
-      details:`${fromWorker.name} إلى ${toWorker.name} · ${shiftDate} · ${shiftType} · طلبات معلقة: ${pendingTasks.length}${outgoingNotes ? ` · ${outgoingNotes}` : ''}`});
+    const tx = db.transaction(() => {
+      db.prepare(`INSERT INTO shift_handovers
+        (id, from_worker_id, to_worker_id, shift_date, shift_type, outgoing_notes, pending_tasks_json, status, incoming_notes, recorded_by_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'بانتظار التأكيد', '', ?, ?)`
+      ).run(id, fromWorkerId, toWorkerId, shiftDate, shiftType, outgoingNotes, JSON.stringify(pendingTasks), actor.id, now);
+
+      // Transfer every still-open task to the incoming worker without closing it or resetting its progress.
+      db.prepare(`UPDATE cleaning_requests
+        SET assigned_worker_id = ?, assigned_by_id = ?, assigned_at = COALESCE(assigned_at, ?), updated_at = ?
+        WHERE assigned_worker_id = ? AND status IN ('تم الإسناد', 'قيد التنفيذ')`
+      ).run(toWorkerId, actor.id, now, now, fromWorkerId);
+
+      writeAuditLog({actorId:actor.id, actorName:actor.name, actorRole:actor.role, action:'تسجيل تسليم وردية ونقل الطلبات المفتوحة', entityType:'shift_handover', entityId:id,
+        details:`${fromWorker.name} إلى ${toWorker.name} · ${shiftDate} · ${shiftType} · طلبات معلقة نُقلت: ${pendingTasks.length}${outgoingNotes ? ` · ${outgoingNotes}` : ''}`});
+    });
+    tx();
     res.status(201).json({handover:{id,fromWorkerId,fromWorkerName:fromWorker.name,toWorkerId,toWorkerName:toWorker.name,shiftDate,shiftType,outgoingNotes,pendingTasks,status:'بانتظار التأكيد',incomingNotes:'',recordedByName:actor.name,confirmedByName:null,createdAt:now,confirmedAt:null}});
   });
 
