@@ -14,7 +14,7 @@ import {
   REQUEST_PRIORITIES,
   detectHighRisk,
 } from '../constants.ts';
-import type {CleaningRequest, Department, RequestPriority} from '../types.ts';
+import type {CleaningRequest, Department, NursingPerformanceRatingChoice, RequestPriority} from '../types.ts';
 import {InfectionControlWarning} from './StatusIndicators.tsx';
 
 interface CleaningRequestFormProps {
@@ -172,6 +172,8 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
             </dd>
           </div>
         </dl>
+
+        <NursingPerformanceRatingForm departmentId={submittedRequest.departmentId} requestId={submittedRequest.id} location={submittedRequest.roomOrLocation} />
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <button
@@ -399,8 +401,81 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
             </button>
           </div>
         </form>
+        {initialDeptId && !isAuthenticated && (
+          <NursingPerformanceRatingForm departmentId={departmentId} location={roomOrLocation} />
+        )}
         </>
       )}
     </div>
+  );
+};
+
+
+const NursingPerformanceRatingForm: React.FC<{departmentId: string; requestId?: string; location?: string}> = ({departmentId, requestId, location = ''}) => {
+  const [rating, setRating] = useState<NursingPerformanceRatingChoice | ''>('');
+  const [reason, setReason] = useState('');
+  const [sending, setSending] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    if (!rating) {
+      setError('يرجى اختيار التقييم.');
+      return;
+    }
+    if (rating === 'غير راضٍ عن الأداء' && !reason.trim()) {
+      setError('يرجى كتابة المشكلة أو سبب عدم الرضا.');
+      return;
+    }
+    setSending(true);
+    try {
+      await api.submitNursingPerformanceRating({
+        departmentId,
+        requestId,
+        location: location.trim(),
+        rating,
+        reason: reason.trim(),
+      });
+      setMessage('شكراً لك، تم تسجيل تقييمك وإرساله إلى الإدارة.');
+      setRating('');
+      setReason('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر إرسال التقييم.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3">
+      <div>
+        <h3 className="text-base font-bold text-slate-900">قيّم أداء عامل النظافة</h3>
+        <p className="mt-1 text-xs text-slate-600">رأيك يساعد الإدارة على متابعة جودة الخدمة وتحسينها.</p>
+      </div>
+      {message && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{message}</p>}
+      {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+      <div className="grid grid-cols-3 gap-2">
+        {(['ممتاز', 'جيد', 'غير راضٍ عن الأداء'] as NursingPerformanceRatingChoice[]).map((option) => (
+          <button key={option} type="button" onClick={() => {setRating(option); setError(null);}}
+            className={`rounded-lg border px-2 py-3 text-sm font-semibold transition-colors ${rating === option ? 'border-indigo-600 bg-white text-indigo-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700'}`}>
+            {option === 'ممتاز' ? '⭐ ممتاز' : option === 'جيد' ? '👍 جيد' : '⚠️ غير راضٍ'}
+          </button>
+        ))}
+      </div>
+      {rating === 'غير راضٍ عن الأداء' && (
+        <div>
+          <label htmlFor="nursing-rating-reason" className="mb-1.5 block text-sm font-semibold text-slate-800">ما المشكلة أو سبب عدم الرضا؟ <span className="text-red-600">*</span></label>
+          <textarea id="nursing-rating-reason" required rows={3} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="مثال: لم يتم تعقيم السرير، الأرضية غير نظيفة، تأخر العامل..."
+            className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-600/20" />
+        </div>
+      )}
+      <button type="submit" disabled={sending || !rating} className="w-full rounded-lg bg-indigo-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">
+        {sending ? 'جاري إرسال التقييم...' : 'إرسال التقييم'}
+      </button>
+      <p className="text-[11px] text-slate-500">لا تكتب أسماء المرضى أو أي معلومات صحية في التقييم.</p>
+    </form>
   );
 };
