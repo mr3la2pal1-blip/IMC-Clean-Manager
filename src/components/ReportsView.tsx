@@ -5,7 +5,7 @@ import type {ReportData} from '../types.ts';
 import {PriorityLabel, StatusLabel, WorkerPresenceText} from './StatusIndicators.tsx';
 
 export const ReportsView: React.FC = () => {
-  const [period, setPeriod] = useState<'daily' | 'weekly'>('daily');
+  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [report, setReport] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,7 +35,7 @@ export const ReportsView: React.FC = () => {
     if (!report) return;
     const rows: string[][] = [
       ['تقرير خدمات النظافة - IMC Clean Manager'],
-      ['الفترة', period === 'daily' ? 'يومي' : 'أسبوعي', report.startDate, report.endDate],
+      ['الفترة', period === 'daily' ? 'يومي' : period === 'weekly' ? 'أسبوعي' : 'شهري', report.startDate, report.endDate],
       [],
       ['القسم', 'إجمالي الطلبات', 'المكتملة', 'المعلقة', 'عالية الخطورة'],
       ...report.byDepartment.map((d) => [
@@ -83,6 +83,13 @@ export const ReportsView: React.FC = () => {
               }`}
             >
               التقرير اليومي
+            </button>
+            <button
+              type="button"
+              onClick={() => setPeriod('monthly')}
+              className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${period === 'monthly' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
+            >
+              التقرير الشهري
             </button>
             <button
               type="button"
