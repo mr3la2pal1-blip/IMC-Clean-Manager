@@ -14,7 +14,7 @@ import {
   REQUEST_PRIORITIES,
   detectHighRisk,
 } from '../constants.ts';
-import type {CleaningRequest, Department, NursingStatusChoice, RequestPriority} from '../types.ts';
+import type {CleaningRequest, Department, RequestPriority} from '../types.ts';
 import {InfectionControlWarning} from './StatusIndicators.tsx';
 
 interface CleaningRequestFormProps {
@@ -34,7 +34,7 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
   const [loadingDepts, setLoadingDepts] = useState(true);
   const [departmentId, setDepartmentId] = useState(initialDeptId || '');
   const [roomOrLocation, setRoomOrLocation] = useState('');
-  const [requestType, setRequestType] = useState(CLEANING_REQUEST_TYPES[0].value);
+  const [selectedRequestTypes, setSelectedRequestTypes] = useState<string[]>([CLEANING_REQUEST_TYPES[0].value]);
   const [priority, setPriority] = useState<RequestPriority>('عادي');
   const [description, setDescription] = useState('');
   const [explicitHighRisk, setExplicitHighRisk] = useState(false);
@@ -42,11 +42,6 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [submittedRequest, setSubmittedRequest] = useState<CleaningRequest | null>(null);
   const [nowClock, setNowClock] = useState(() => new Date().toISOString());
-  const [nursingStatus, setNursingStatus] = useState<NursingStatusChoice>('لم يتم إنجاز المهمة بعد');
-  const [nursingLocation, setNursingLocation] = useState('');
-  const [nursingNote, setNursingNote] = useState('');
-  const [nursingSubmitting, setNursingSubmitting] = useState(false);
-  const [nursingMessage, setNursingMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNowClock(new Date().toISOString()), 30000);
@@ -84,8 +79,8 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
   );
 
   const isHighRisk = useMemo(
-    () => detectHighRisk(requestType, description, explicitHighRisk),
-    [requestType, description, explicitHighRisk],
+    () => selectedRequestTypes.some((type) => detectHighRisk(type, description, explicitHighRisk)),
+    [selectedRequestTypes, description, explicitHighRisk],
   );
 
   useEffect(() => {
@@ -97,8 +92,8 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!departmentId || !roomOrLocation.trim()) {
-      setError('يرجى تحديد القسم وإدخال رقم الغرفة أو الموقع.');
+    if (!departmentId || !roomOrLocation.trim() || selectedRequestTypes.length === 0) {
+      setError('يرجى تحديد القسم والغرفة أو الموقع واختيار احتياج واحد على الأقل.');
       return;
     }
 
@@ -107,7 +102,7 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
       const payload = {
         departmentId,
         roomOrLocation: roomOrLocation.trim(),
-        requestType,
+        requestType: selectedRequestTypes.join('؛ '),
         priority,
         description: description.trim(),
         isHighRisk,
@@ -124,31 +119,10 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
     }
   };
 
-  const handleNursingStatusSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!departmentId || nursingSubmitting) return;
-    setNursingSubmitting(true);
-    setNursingMessage(null);
-    try {
-      await api.submitNursingStatusReport({
-        departmentId,
-        status: nursingStatus,
-        location: nursingLocation.trim(),
-        note: nursingNote.trim(),
-      });
-      setNursingMessage('تم تسجيل البلاغ بنجاح، وسيظهر لدى المشرف والإدارة.');
-      setNursingNote('');
-    } catch (err) {
-      setNursingMessage(err instanceof Error ? err.message : 'تعذر تسجيل البلاغ. حاول مرة أخرى.');
-    } finally {
-      setNursingSubmitting(false);
-    }
-  };
-
   const handleReset = () => {
     setSubmittedRequest(null);
     setRoomOrLocation('');
-    setRequestType(CLEANING_REQUEST_TYPES[0].value);
+    setSelectedRequestTypes([CLEANING_REQUEST_TYPES[0].value]);
     setPriority('عادي');
     setDescription('');
     setExplicitHighRisk(false);
@@ -269,27 +243,6 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
         </div>
       ) : (
         <>
-        {!isAuthenticated && initialDeptId && (
-          <section className="mt-6 rounded-xl border border-teal-200 bg-teal-50/60 p-4">
-            <h3 className="font-bold text-slate-900">متابعة حالة عامل النظافة أو المهمة</h3>
-            <p className="mt-1 text-xs text-slate-600">اختر الحالة لإرسال بلاغ للقسم والمشرف. هذا البلاغ لا يغلق المهمة تلقائياً؛ يعتمد المشرف أو العامل إتمامها في النظام.</p>
-            <form onSubmit={handleNursingStatusSubmit} className="mt-4 space-y-3">
-              <label htmlFor="nursing-status" className="block text-sm font-semibold text-slate-800">حالة العامل / المهمة</label>
-              <select id="nursing-status" value={nursingStatus} onChange={(e) => setNursingStatus(e.target.value as NursingStatusChoice)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm">
-                <option value="العامل متأخر ولم يحضر">العامل متأخر ولم يحضر</option>
-                <option value="تم إنجاز المهمة">تم إنجاز المهمة</option>
-                <option value="لم يتم إنجاز المهمة بعد">لم يتم إنجاز المهمة بعد</option>
-              </select>
-              <input value={nursingLocation} onChange={(e) => setNursingLocation(e.target.value)} maxLength={120} placeholder="الغرفة أو الموقع (اختياري)" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" />
-              <textarea value={nursingNote} onChange={(e) => setNursingNote(e.target.value)} maxLength={400} rows={2} placeholder="ملاحظة إضافية (اختياري، دون بيانات المرضى)" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" />
-              {nursingMessage && <p role="status" className="text-sm font-medium text-teal-800">{nursingMessage}</p>}
-              <button type="submit" disabled={nursingSubmitting} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
-                {nursingSubmitting ? 'جاري تسجيل البلاغ...' : 'إرسال بلاغ الحالة'}
-              </button>
-            </form>
-          </section>
-        )}
-
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -335,23 +288,34 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
             />
           </div>
 
-          <div>
-            <label htmlFor="req-type" className="block text-sm font-semibold text-slate-800 mb-1.5">
-              نوع طلب النظافة <span className="text-red-600">*</span>
-            </label>
-            <select
-              id="req-type"
-              value={requestType}
-              onChange={(e) => setRequestType(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-600/20"
-            >
-              {CLEANING_REQUEST_TYPES.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <section className="rounded-xl border border-teal-200 bg-teal-50/50 p-4">
+            <div className="mb-3">
+              <h3 className="text-base font-bold text-slate-900">ماذا تريد من فريق النظافة؟</h3>
+              <p className="mt-1 text-xs text-slate-600">اختر خدمة واحدة أو أكثر، ويمكنك تحديد عدة احتياجات في نفس الطلب.</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {CLEANING_REQUEST_TYPES.map((opt) => {
+                const checked = selectedRequestTypes.includes(opt.value);
+                return (
+                  <label key={opt.value} className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors ${checked ? 'border-teal-600 bg-white shadow-sm' : 'border-slate-200 bg-white hover:border-teal-300'}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => setSelectedRequestTypes((current) =>
+                        e.target.checked
+                          ? [...current, opt.value]
+                          : current.filter((value) => value !== opt.value)
+                      )}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+                    />
+                    <span className="text-sm font-medium leading-5 text-slate-800">{opt.label}</span>
+                    {opt.isHighRisk && <span className="mr-auto shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">احتياج خاص</span>}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs text-slate-500">الاختيارات المحددة: {selectedRequestTypes.length}</p>
+          </section>
 
           <div>
             <span className="block text-sm font-semibold text-slate-800 mb-1.5">
