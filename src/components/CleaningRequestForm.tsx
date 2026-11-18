@@ -268,6 +268,7 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
           لا توجد أقسام مفعلة في النظام حالياً. يرجى قيام مدير النظام بإضافة أقسام المستشفى أولاً.
         </div>
       ) : (
+        <>
         {!isAuthenticated && initialDeptId && (
           <section className="mt-6 rounded-xl border border-teal-200 bg-teal-50/60 p-4">
             <h3 className="font-bold text-slate-900">متابعة حالة عامل النظافة أو المهمة</h3>
@@ -434,6 +435,7 @@ export const CleaningRequestForm: React.FC<CleaningRequestFormProps> = ({
             </button>
           </div>
         </form>
+        </>
       )}
     </div>
   );
