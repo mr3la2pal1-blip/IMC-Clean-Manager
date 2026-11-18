@@ -35,9 +35,23 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Point Android shell to the published website
+      - name: Create Capacitor JSON config for CI
         run: |
-          node --input-type=module -e "import fs from 'node:fs'; const p='capacitor.config.ts'; let s=fs.readFileSync(p,'utf8'); s=s.replace(/server: \\{\\s*androidScheme: 'https',\\s*\\}/, \"server: { androidScheme: 'https', url: 'https://imc-clean-manager-mhdt.onrender.com', cleartext: false }\"); if (!s.includes('imc-clean-manager-mhdt.onrender.com')) process.exit(1); fs.writeFileSync(p,s);"
+          rm -f capacitor.config.ts
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.imc.cleanmanager",
+            "appName": "IMC Clean Manager",
+            "webDir": "dist",
+            "android": { "allowMixedContent": false },
+            "server": {
+              "androidScheme": "https",
+              "url": "https://imc-clean-manager-mhdt.onrender.com",
+              "cleartext": false
+            }
+          }
+          JSON
+
       - name: Build web assets
         run: npm run build
 
