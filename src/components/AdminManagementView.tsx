@@ -891,7 +891,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => { setShowDeptModal(false); setEditingDept(null); }}
+                  onClick={() => setShowDeptModal(false)}
                   className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 cursor-pointer"
                 >
                   إلغاء
@@ -901,7 +901,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
                   disabled={savingDept}
                   className="rounded-lg bg-teal-700 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60 cursor-pointer"
                 >
-                  {savingDept ? 'جاري الحفظ...' : editingDept ? 'حفظ التعديلات' : 'إضافة القسم وتوليد QR'}
+                  {savingDept ? 'جاري الإضافة...' : 'إضافة القسم وتوليد QR'}
                 </button>
               </div>
             </form>
