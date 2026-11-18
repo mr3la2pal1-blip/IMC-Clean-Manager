@@ -134,7 +134,7 @@ export interface ShiftHandoverRecord {
 }
 
 export interface ReportData {
-  period: 'daily' | 'weekly';
+  period: 'daily' | 'weekly' | 'monthly';
   startDate: string;
   endDate: string;
   summary: {
@@ -178,4 +178,14 @@ export interface ReportData {
     elapsedMinutes: number;
     isDelayed: boolean;
   }>;
+}
+
+export interface WorkerNoteRecord {
+  id: string;
+  workerId: string;
+  workerName: string;
+  noteType: 'تأخير' | 'شكوى' | 'ملاحظة' | 'إشادة';
+  details: string;
+  createdByName: string;
+  createdAt: string;
 }
