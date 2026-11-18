@@ -341,7 +341,8 @@ export function registerRoutes(app: Express): void {
       return;
     }
 
-    const validType = CLEANING_REQUEST_TYPES.some((t) => t.value === requestType);
+    const selectedTypes = requestType.split('؛').map((item) => item.trim()).filter(Boolean);
+    const validType = selectedTypes.length > 0 && selectedTypes.every((value) => CLEANING_REQUEST_TYPES.some((t) => t.value === value));
     if (!validType) {
       res.status(400).json({error: 'نوع طلب النظافة غير مدرج ضمن الأنواع المعتمدة.'});
       return;
@@ -356,7 +357,7 @@ export function registerRoutes(app: Express): void {
       return;
     }
 
-    const isHighRisk = detectHighRisk(requestType, description, explicitHighRisk);
+    const isHighRisk = selectedTypes.some((value) => detectHighRisk(value, description, explicitHighRisk));
     const effectivePriority: RequestPriority = isHighRisk && priority === 'عادي' ? 'عاجل' : priority;
     const id = generateRequestId();
     const now = new Date().toISOString();
