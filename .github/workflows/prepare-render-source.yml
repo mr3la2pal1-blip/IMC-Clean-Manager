@@ -82,6 +82,25 @@ jobs:
               ("                        <td className=\"px-4 py-3 text-xs text-slate-700\">{s.shiftType}</td>\n                        <td className=\"px-4 py-3 text-xs font-semibold\">", "                        <td className=\"px-4 py-3 text-xs text-slate-700\">{s.shiftType}</td>\n                        <td className=\"px-4 py-3 font-mono text-xs text-slate-600\" dir=\"ltr\">{s.phone || '—'}</td>\n                        <td className=\"px-4 py-3 text-xs font-semibold\">"),
           ])
           PY
+      - name: Add live operations monitor entry point
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("src/App.tsx")
+          s = p.read_text()
+          replacements = [
+              ("  BarChart3,\n", "  Activity,\n  BarChart3,\n"),
+              ("import {LoginView, SetupAdminView} from './components/AuthViews.tsx';\n", "import {LoginView, SetupAdminView} from './components/AuthViews.tsx';\nimport {LiveMonitorView} from './components/LiveMonitorView.tsx';\n"),
+              ("type ActiveSection = 'dashboard' | 'reports' | 'admin' | 'qr-codes' | 'new-request';", "type ActiveSection = 'dashboard' | 'live-monitor' | 'reports' | 'admin' | 'qr-codes' | 'new-request';"),
+              ("            {id: 'admin', label: 'إدارة الطاقم والأقسام', icon: <SlidersHorizontal className=\"w-4 h-4\" />},\n", "            {id: 'admin', label: 'إدارة الطاقم والأقسام', icon: <SlidersHorizontal className=\"w-4 h-4\" />},\n            {id: 'live-monitor', label: 'المراقبة المباشرة', icon: <Activity className=\"w-4 h-4\" />},\n"),
+              ("          ) : activeSection === 'reports' ? (\n            <ReportsView />", "          ) : activeSection === 'live-monitor' && user.role === 'admin' ? (\n            <LiveMonitorView requests={requests} workers={workers} departments={departments} loading={loadingData} onRefresh={() => loadWorkspaceData(user)} />\n          ) : activeSection === 'reports' ? (\n            <ReportsView />"),
+          ]
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit(f"Live monitor patch could not find expected App.tsx fragment: {old[:100]!r}")
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
       - name: Commit source files to repository root
         run: |
           git config user.name "github-actions[bot]"
