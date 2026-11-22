@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type {Express, Request, Response} from 'express';
+import type {Express, NextFunction, Request, Response} from 'express';
 import {
   CLEANING_REQUEST_TYPES,
   PRIORITY_SLA_MINUTES,
@@ -158,6 +158,23 @@ function generateRequestId(): string {
 }
 
 export function registerRoutes(app: Express): void {
+  // Express 4 does not forward rejected async route promises automatically.
+  const routeApp = app as unknown as Record<string, (...args: unknown[]) => unknown>;
+  for (const method of ['get', 'post', 'patch'] as const) {
+    const original = routeApp[method].bind(app);
+    routeApp[method] = (path: unknown, ...handlers: unknown[]) =>
+      original(path, ...handlers.map((handler) => {
+        if (typeof handler !== 'function') return handler;
+        return (req: Request, res: Response, next: NextFunction) => {
+          try {
+            Promise.resolve((handler as (req: Request, res: Response, next: NextFunction) => unknown)(req, res, next))
+              .catch(next);
+          } catch (error) {
+            next(error);
+          }
+        };
+      }));
+  }
   app.get('/api/health', async (_req: Request, res: Response) => {
     res.json({ok: true, service: 'IMC Clean Manager'});
   });
@@ -169,7 +186,7 @@ export function registerRoutes(app: Express): void {
   });
 
   // One-time bootstrap for initial System Administrator (no hardcoded passwords!)
-  app.post('/api/auth/bootstrap', async async (req: Request, res: Response) => {
+  app.post('/api/auth/bootstrap', async (req: Request, res: Response) => {
     const existingCount = (await db.prepare('SELECT COUNT(*) AS count FROM users').get() as {count: number}).count;
     if (existingCount > 0) {
       res.status(403).json({error: 'تمت تهيئة النظام مسبقاً. يرجى تسجيل الدخول.'});
@@ -195,7 +212,14 @@ export function registerRoutes(app: Express): void {
     const adminId = `USR-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const passwordHash = hashPassword(password);
 
+    let bootstrapAlreadyCompleted = false;
     const tx = db.transaction(async () => {
+      await db.prepare('SELECT pg_advisory_xact_lock(781204611)').get();
+      const lockedCount = (await db.prepare('SELECT COUNT(*) AS count FROM users').get() as {count: number}).count;
+      if (lockedCount > 0) {
+        bootstrapAlreadyCompleted = true;
+        return;
+      }
       await db.prepare(
         `INSERT INTO users (id, name, username, password_hash, role, phone, shift_name, worker_status, is_active, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'admin', ?, NULL, 'نشط', 1, ?, ?)`,
@@ -233,8 +257,12 @@ export function registerRoutes(app: Express): void {
     });
 
     await tx();
+    if (bootstrapAlreadyCompleted) {
+      res.status(403).json({error: 'تمت تهيئة النظام مسبقاً. يرجى تسجيل الدخول.'});
+      return;
+    }
 
-    const userRow = db
+    const userRow = await db
       .prepare('SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at FROM users WHERE id = ?')
       .get(adminId) as Parameters<typeof mapUserRow>[0];
 
@@ -252,7 +280,7 @@ export function registerRoutes(app: Express): void {
       return;
     }
 
-    const userRow = db
+    const userRow = await db
       .prepare(
         `SELECT id, name, username, password_hash, role, phone, shift_name, worker_status, is_active, created_at
          FROM users WHERE username = ?`,
@@ -299,7 +327,7 @@ export function registerRoutes(app: Express): void {
 
   // Public QR-code endpoints for department cleaning request submission
   app.get('/api/public/departments', async (_req: Request, res: Response) => {
-    const rows = db
+    const rows = await db
       .prepare('SELECT id, name, floor_or_wing, is_active, created_at FROM departments WHERE is_active = 1 ORDER BY name ASC')
       .all() as Array<{
       id: string;
@@ -349,7 +377,7 @@ export function registerRoutes(app: Express): void {
       return;
     }
 
-    const dept = db
+    const dept = await db
       .prepare('SELECT id, name, is_active FROM departments WHERE id = ?')
       .get(departmentId) as {id: string; name: string; is_active: number} | undefined;
 
@@ -506,11 +534,11 @@ export function registerRoutes(app: Express): void {
     const user = req.user!;
     let rows: RawRequestRow[];
     if (user.role === 'worker') {
-      rows = db
+      rows = await db
         .prepare(`${REQUEST_SELECT_SQL} WHERE r.assigned_worker_id = ? ORDER BY r.created_at DESC`)
         .all(user.id) as RawRequestRow[];
     } else {
-      rows = db
+      rows = await db
         .prepare(`${REQUEST_SELECT_SQL} ORDER BY r.created_at DESC`)
         .all() as RawRequestRow[];
     }
@@ -533,7 +561,7 @@ export function registerRoutes(app: Express): void {
       return;
     }
 
-    const logs = db
+    const logs = await db
       .prepare(
         `SELECT id, actor_id, actor_name, actor_role, action, entity_type, entity_id, details, created_at
          FROM audit_logs WHERE entity_type = 'request' AND entity_id = ? ORDER BY created_at DESC`,
@@ -590,7 +618,7 @@ export function registerRoutes(app: Express): void {
         return;
       }
 
-      const dept = db
+      const dept = await db
         .prepare('SELECT id, name, is_active FROM departments WHERE id = ?')
         .get(departmentId) as {id: string; name: string; is_active: number} | undefined;
       if (!dept || dept.is_active !== 1) {
@@ -648,7 +676,7 @@ export function registerRoutes(app: Express): void {
         return;
       }
 
-      const worker = db
+      const worker = await db
         .prepare("SELECT id, name, worker_status, is_active FROM users WHERE id = ? AND role = 'worker'")
         .get(workerId) as {id: string; name: string; worker_status: WorkerStatus; is_active: number} | undefined;
 
@@ -874,7 +902,7 @@ export function registerRoutes(app: Express): void {
     requireAuth,
     requireRole(['admin', 'supervisor']),
     async (_req: AuthenticatedRequest, res: Response) => {
-      const rows = db
+      const rows = await db
         .prepare(
           `SELECT u.id, u.name, u.phone, u.shift_name, u.worker_status, u.is_active,
             (SELECT COUNT(*) FROM cleaning_requests r
@@ -913,7 +941,7 @@ export function registerRoutes(app: Express): void {
     requireAuth,
     requireRole(['admin', 'supervisor']),
     async (_req: AuthenticatedRequest, res: Response) => {
-      const rows = db
+      const rows = await db
         .prepare('SELECT id, name, floor_or_wing, is_active, created_at FROM departments ORDER BY name ASC')
         .all() as Array<{
         id: string;
@@ -1029,7 +1057,7 @@ export function registerRoutes(app: Express): void {
     requireAuth,
     requireRole(['admin']),
     async (_req: AuthenticatedRequest, res: Response) => {
-      const rows = db
+      const rows = await db
         .prepare(
           `SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at
            FROM users ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'supervisor' THEN 2 ELSE 3 END, name ASC`,
@@ -1090,7 +1118,7 @@ export function registerRoutes(app: Express): void {
         details: `${name} (${username})`,
       });
 
-      const created = db
+      const created = await db
         .prepare('SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at FROM users WHERE id = ?')
         .get(id) as Parameters<typeof mapUserRow>[0];
       res.status(201).json({user: mapUserRow(created)});
@@ -1104,7 +1132,7 @@ export function registerRoutes(app: Express): void {
     async async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const id = sanitizeText(req.params.id, 64);
-      const existing = db
+      const existing = await db
         .prepare('SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at FROM users WHERE id = ?')
         .get(id) as Parameters<typeof mapUserRow>[0] | undefined;
 
@@ -1170,7 +1198,7 @@ export function registerRoutes(app: Express): void {
         details: `${name} · الحالة: ${workerStatus} · ${isActive === 1 ? 'مفعل' : 'معطل'}`,
       });
 
-      const updated = db
+      const updated = await db
         .prepare('SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at FROM users WHERE id = ?')
         .get(id) as Parameters<typeof mapUserRow>[0];
       res.json({user: mapUserRow(updated)});
@@ -1458,15 +1486,15 @@ export function registerRoutes(app: Express): void {
       startDateObj.setUTCHours(0, 0, 0, 0);
       const startDateIso = startDateObj.toISOString();
 
-      const requests = db
+      const requests = await db
         .prepare(`${REQUEST_SELECT_SQL} WHERE r.created_at >= ? AND r.created_at <= ? ORDER BY r.created_at DESC`)
         .all(startDateIso, endDateIso) as RawRequestRow[];
 
-      const departments = db
+      const departments = await db
         .prepare('SELECT id, name FROM departments ORDER BY name ASC')
         .all() as Array<{id: string; name: string}>;
 
-      const workers = db
+      const workers = await db
         .prepare("SELECT id, name, worker_status, shift_name FROM users WHERE role = 'worker' ORDER BY name ASC")
         .all() as Array<{id: string; name: string; worker_status: WorkerStatus; shift_name: string | null}>;
 
@@ -1520,7 +1548,7 @@ export function registerRoutes(app: Express): void {
       });
 
       // Also include any currently open requests even if created slightly earlier so delayed requests never disappear
-      const allOpenRequests = db
+      const allOpenRequests = await db
         .prepare(`${REQUEST_SELECT_SQL} WHERE r.status IN ('جديد', 'تم الإسناد', 'قيد التنفيذ') ORDER BY r.created_at ASC`)
         .all() as RawRequestRow[];
 
@@ -1573,7 +1601,7 @@ export function registerRoutes(app: Express): void {
     requireAuth,
     requireRole(['admin']),
     async (_req: AuthenticatedRequest, res: Response) => {
-      const rows = db
+      const rows = await db
         .prepare(
           `SELECT id, actor_id, actor_name, actor_role, action, entity_type, entity_id, details, created_at
            FROM audit_logs ORDER BY created_at DESC LIMIT 150`,
@@ -1651,7 +1679,7 @@ export function registerRoutes(app: Express): void {
       uid = tokenPayload.uid;
     }
 
-    const user = db
+    const user = await db
       .prepare('SELECT id, role, is_active FROM users WHERE id = ?')
       .get(uid) as Pick<AuthenticatedUserRow, 'id' | 'role' | 'is_active'> | undefined;
 
