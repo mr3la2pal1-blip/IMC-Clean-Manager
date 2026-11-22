@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type {Express, Request, Response} from 'express';
+import type {Express, NextFunction, Request, Response} from 'express';
 import {
   CLEANING_REQUEST_TYPES,
   PRIORITY_SLA_MINUTES,
@@ -20,9 +20,10 @@ import {
   verifyDownloadTicket,
   verifyPassword,
   verifySessionToken,
-} from './auth.ts';
-import type {AuthenticatedRequest, AuthenticatedUserRow} from './auth.ts';
-import {db, writeAuditLog} from './db.ts';
+} from './auth-postgres.ts';
+import type {AuthenticatedRequest, AuthenticatedUserRow} from './auth-postgres.ts';
+import {db, writeAuditLog} from './postgres-compat.ts';
+import {pgQuery, withPgTransaction} from './postgres.ts';
 import {buildProjectZipBuffer} from './zip.ts';
 
 function sanitizeText(input: unknown, maxLen: number): string {
@@ -157,19 +158,36 @@ function generateRequestId(): string {
 }
 
 export function registerRoutes(app: Express): void {
-  app.get('/api/health', (_req: Request, res: Response) => {
+  // Express 4 does not forward rejected async route promises automatically.
+  const routeApp = app as unknown as Record<string, (...args: unknown[]) => unknown>;
+  for (const method of ['get', 'post', 'patch'] as const) {
+    const original = routeApp[method].bind(app);
+    routeApp[method] = (path: unknown, ...handlers: unknown[]) =>
+      original(path, ...handlers.map((handler) => {
+        if (typeof handler !== 'function') return handler;
+        return (req: Request, res: Response, next: NextFunction) => {
+          try {
+            Promise.resolve((handler as (req: Request, res: Response, next: NextFunction) => unknown)(req, res, next))
+              .catch(next);
+          } catch (error) {
+            next(error);
+          }
+        };
+      }));
+  }
+  app.get('/api/health', async (_req: Request, res: Response) => {
     res.json({ok: true, service: 'IMC Clean Manager'});
   });
 
   // First-run setup check: returns true only when 0 users exist in DB
-  app.get('/api/auth/setup-status', (_req: Request, res: Response) => {
-    const row = db.prepare('SELECT COUNT(*) AS count FROM users').get() as {count: number};
+  app.get('/api/auth/setup-status', async (_req: Request, res: Response) => {
+    const row = await db.prepare('SELECT COUNT(*) AS count FROM users').get() as {count: number};
     res.json({needsSetup: row.count === 0});
   });
 
   // One-time bootstrap for initial System Administrator (no hardcoded passwords!)
-  app.post('/api/auth/bootstrap', (req: Request, res: Response) => {
-    const existingCount = (db.prepare('SELECT COUNT(*) AS count FROM users').get() as {count: number}).count;
+  app.post('/api/auth/bootstrap', async (req: Request, res: Response) => {
+    const existingCount = (await db.prepare('SELECT COUNT(*) AS count FROM users').get() as {count: number}).count;
     if (existingCount > 0) {
       res.status(403).json({error: 'تمت تهيئة النظام مسبقاً. يرجى تسجيل الدخول.'});
       return;
@@ -194,8 +212,15 @@ export function registerRoutes(app: Express): void {
     const adminId = `USR-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const passwordHash = hashPassword(password);
 
-    const tx = db.transaction(() => {
-      db.prepare(
+    let bootstrapAlreadyCompleted = false;
+    const tx = db.transaction(async () => {
+      await db.prepare('SELECT pg_advisory_xact_lock(781204611)').get();
+      const lockedCount = (await db.prepare('SELECT COUNT(*) AS count FROM users').get() as {count: number}).count;
+      if (lockedCount > 0) {
+        bootstrapAlreadyCompleted = true;
+        return;
+      }
+      await db.prepare(
         `INSERT INTO users (id, name, username, password_hash, role, phone, shift_name, worker_status, is_active, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'admin', ?, NULL, 'نشط', 1, ?, ?)`,
       ).run(adminId, name, username, passwordHash, phone, now, now);
@@ -216,11 +241,11 @@ export function registerRoutes(app: Express): void {
            VALUES (?, ?, ?, 1, ?)`,
         );
         for (const dept of defaultDepts) {
-          insertDept.run(dept.id, dept.name, dept.floor, now);
+          await insertDept.run(dept.id, dept.name, dept.floor, now);
         }
       }
 
-      writeAuditLog({
+      await writeAuditLog({
         actorId: adminId,
         actorName: name,
         actorRole: 'admin',
@@ -231,9 +256,13 @@ export function registerRoutes(app: Express): void {
       });
     });
 
-    tx();
+    await tx();
+    if (bootstrapAlreadyCompleted) {
+      res.status(403).json({error: 'تمت تهيئة النظام مسبقاً. يرجى تسجيل الدخول.'});
+      return;
+    }
 
-    const userRow = db
+    const userRow = await db
       .prepare('SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at FROM users WHERE id = ?')
       .get(adminId) as Parameters<typeof mapUserRow>[0];
 
@@ -242,7 +271,7 @@ export function registerRoutes(app: Express): void {
     res.status(201).json({user: mapUserRow(userRow), token});
   });
 
-  app.post('/api/auth/login', (req: Request, res: Response) => {
+  app.post('/api/auth/login', async (req: Request, res: Response) => {
     const username = sanitizeText(req.body?.username, 60).toLowerCase();
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
@@ -251,7 +280,7 @@ export function registerRoutes(app: Express): void {
       return;
     }
 
-    const userRow = db
+    const userRow = await db
       .prepare(
         `SELECT id, name, username, password_hash, role, phone, shift_name, worker_status, is_active, created_at
          FROM users WHERE username = ?`,
@@ -270,7 +299,7 @@ export function registerRoutes(app: Express): void {
 
     const token = signSessionToken(userRow.id, userRow.role);
     setSessionCookie(res, token, req);
-    writeAuditLog({
+    await writeAuditLog({
       actorId: userRow.id,
       actorName: userRow.name,
       actorRole: userRow.role,
@@ -283,12 +312,12 @@ export function registerRoutes(app: Express): void {
     res.json({user: mapUserRow(userRow), token});
   });
 
-  app.post('/api/auth/logout', (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/auth/logout', async (req: AuthenticatedRequest, res: Response) => {
     clearSessionCookie(res, req);
     res.json({ok: true});
   });
 
-  app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     if (!req.user) {
       res.status(401).json({error: 'غير مصرح.'});
       return;
@@ -297,8 +326,8 @@ export function registerRoutes(app: Express): void {
   });
 
   // Public QR-code endpoints for department cleaning request submission
-  app.get('/api/public/departments', (_req: Request, res: Response) => {
-    const rows = db
+  app.get('/api/public/departments', async (_req: Request, res: Response) => {
+    const rows = await db
       .prepare('SELECT id, name, floor_or_wing, is_active, created_at FROM departments WHERE is_active = 1 ORDER BY name ASC')
       .all() as Array<{
       id: string;
@@ -318,7 +347,7 @@ export function registerRoutes(app: Express): void {
     });
   });
 
-  app.post('/api/public/requests', (req: Request, res: Response) => {
+  app.post('/api/public/requests', async (req: Request, res: Response) => {
     if (containsPhiPayloadKeys(req.body)) {
       res.status(400).json({error: 'يُمنع منعاً باتاً إرسال أو جمع أي بيانات أو معلومات صحية للمرضى.'});
       return;
@@ -348,7 +377,7 @@ export function registerRoutes(app: Express): void {
       return;
     }
 
-    const dept = db
+    const dept = await db
       .prepare('SELECT id, name, is_active FROM departments WHERE id = ?')
       .get(departmentId) as {id: string; name: string; is_active: number} | undefined;
 
@@ -362,14 +391,14 @@ export function registerRoutes(app: Express): void {
     const id = generateRequestId();
     const now = new Date().toISOString();
 
-    db.prepare(
+    await db.prepare(
       `INSERT INTO cleaning_requests (
         id, department_id, room_or_location, request_type, priority, description,
         is_high_risk, status, created_by_id, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'جديد', NULL, ?, ?)`,
     ).run(id, dept.id, roomOrLocation, requestType, effectivePriority, description, isHighRisk ? 1 : 0, now, now);
 
-    writeAuditLog({
+    await writeAuditLog({
       actorId: null,
       actorName: 'نموذج رمز QR للقسم',
       actorRole: 'qr_form',
@@ -379,12 +408,12 @@ export function registerRoutes(app: Express): void {
       details: `${dept.name} · ${roomOrLocation} · ${requestType}${isHighRisk ? ' · تنبيه خطورة عالية' : ''}`,
     });
 
-    const created = db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
+    const created = await db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
     res.status(201).json({request: mapRequestRow(created)});
   });
 
   // Public nursing feedback about cleaning staff performance.
-  app.post('/api/public/nursing-performance-ratings', (req: Request, res: Response) => {
+  app.post('/api/public/nursing-performance-ratings', async (req: Request, res: Response) => {
     const departmentId = sanitizeText(req.body?.departmentId, 64);
     const requestId = sanitizeText(req.body?.requestId, 64);
     const location = sanitizeText(req.body?.location, 120);
@@ -399,7 +428,7 @@ export function registerRoutes(app: Express): void {
       res.status(400).json({error: 'يرجى كتابة المشكلة أو سبب عدم الرضا.'});
       return;
     }
-    const dept = db.prepare('SELECT id, name, is_active FROM departments WHERE id = ?').get(departmentId) as
+    const dept = await db.prepare('SELECT id, name, is_active FROM departments WHERE id = ?').get(departmentId) as
       | {id: string; name: string; is_active: number}
       | undefined;
     if (!dept || dept.is_active !== 1) {
@@ -407,7 +436,7 @@ export function registerRoutes(app: Express): void {
       return;
     }
     if (requestId) {
-      const request = db.prepare('SELECT id, department_id FROM cleaning_requests WHERE id = ?').get(requestId) as
+      const request = await db.prepare('SELECT id, department_id FROM cleaning_requests WHERE id = ?').get(requestId) as
         | {id: string; department_id: string}
         | undefined;
       if (!request || request.department_id !== departmentId) {
@@ -417,10 +446,10 @@ export function registerRoutes(app: Express): void {
     }
     const id = `RATE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const now = new Date().toISOString();
-    db.prepare(
+    await db.prepare(
       'INSERT INTO nursing_performance_ratings (id, department_id, request_id, location, rating, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     ).run(id, departmentId, requestId || null, location, rating, reason, now);
-    writeAuditLog({
+    await writeAuditLog({
       actorId: null,
       actorName: 'طاقم التمريض عبر رمز QR',
       actorRole: 'qr_form',
@@ -433,8 +462,8 @@ export function registerRoutes(app: Express): void {
   });
 
   // Admin and supervisor review of nursing performance ratings.
-  app.get('/api/nursing-performance-ratings', requireAuth, requireRole(['admin', 'supervisor']), (_req: AuthenticatedRequest, res: Response) => {
-    const rows = db.prepare(
+  app.get('/api/nursing-performance-ratings', requireAuth, requireRole(['admin', 'supervisor']), async (_req: AuthenticatedRequest, res: Response) => {
+    const rows = await db.prepare(
       `SELECT p.id, p.department_id, d.name AS department_name, p.request_id, p.location, p.rating, p.reason, p.created_at
        FROM nursing_performance_ratings p JOIN departments d ON d.id = p.department_id
        ORDER BY p.created_at DESC LIMIT 150`,
@@ -443,7 +472,7 @@ export function registerRoutes(app: Express): void {
   });
 
   // Public QR status report from nursing staff. This records feedback without changing the worker's task status.
-  app.post('/api/public/nursing-status-reports', (req: Request, res: Response) => {
+  app.post('/api/public/nursing-status-reports', async (req: Request, res: Response) => {
     const departmentId = sanitizeText(req.body?.departmentId, 64);
     const status = sanitizeText(req.body?.status, 80);
     const location = sanitizeText(req.body?.location, 120);
@@ -453,7 +482,7 @@ export function registerRoutes(app: Express): void {
       res.status(400).json({error: 'يرجى تحديد القسم وحالة العامل أو المهمة.'});
       return;
     }
-    const dept = db.prepare('SELECT id, name, is_active FROM departments WHERE id = ?').get(departmentId) as
+    const dept = await db.prepare('SELECT id, name, is_active FROM departments WHERE id = ?').get(departmentId) as
       | {id: string; name: string; is_active: number}
       | undefined;
     if (!dept || dept.is_active !== 1) {
@@ -462,10 +491,10 @@ export function registerRoutes(app: Express): void {
     }
     const id = `NUR-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const now = new Date().toISOString();
-    db.prepare(
+    await db.prepare(
       'INSERT INTO nursing_status_reports (id, department_id, status, location, note, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run(id, departmentId, status, location, note, now);
-    writeAuditLog({
+    await writeAuditLog({
       actorId: null,
       actorName: 'طاقم التمريض عبر رمز QR',
       actorRole: 'qr_form',
@@ -480,8 +509,8 @@ export function registerRoutes(app: Express): void {
   });
 
   // Admin and supervisor review of nursing QR status reports.
-  app.get('/api/nursing-status-reports', requireAuth, requireRole(['admin', 'supervisor']), (_req: AuthenticatedRequest, res: Response) => {
-    const rows = db.prepare(
+  app.get('/api/nursing-status-reports', requireAuth, requireRole(['admin', 'supervisor']), async (_req: AuthenticatedRequest, res: Response) => {
+    const rows = await db.prepare(
       `SELECT n.id, n.department_id, d.name AS department_name, n.status, n.location, n.note, n.created_at
        FROM nursing_status_reports n JOIN departments d ON d.id = n.department_id
        ORDER BY n.created_at DESC LIMIT 100`,
@@ -501,15 +530,15 @@ export function registerRoutes(app: Express): void {
   });
 
   // Authenticated requests listing (strict server-side RBAC filtering!)
-  app.get('/api/requests', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/requests', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
     let rows: RawRequestRow[];
     if (user.role === 'worker') {
-      rows = db
+      rows = await db
         .prepare(`${REQUEST_SELECT_SQL} WHERE r.assigned_worker_id = ? ORDER BY r.created_at DESC`)
         .all(user.id) as RawRequestRow[];
     } else {
-      rows = db
+      rows = await db
         .prepare(`${REQUEST_SELECT_SQL} ORDER BY r.created_at DESC`)
         .all() as RawRequestRow[];
     }
@@ -517,10 +546,10 @@ export function registerRoutes(app: Express): void {
   });
 
   // Single request + audit trail (workers can only view their own assigned tasks)
-  app.get('/api/requests/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/requests/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
     const id = sanitizeText(req.params.id, 64);
-    const row = db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow | undefined;
+    const row = await db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow | undefined;
 
     if (!row) {
       res.status(404).json({error: 'الطلب غير موجود.'});
@@ -532,7 +561,7 @@ export function registerRoutes(app: Express): void {
       return;
     }
 
-    const logs = db
+    const logs = await db
       .prepare(
         `SELECT id, actor_id, actor_name, actor_role, action, entity_type, entity_id, details, created_at
          FROM audit_logs WHERE entity_type = 'request' AND entity_id = ? ORDER BY created_at DESC`,
@@ -570,7 +599,7 @@ export function registerRoutes(app: Express): void {
     '/api/requests',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       if (containsPhiPayloadKeys(req.body)) {
         res.status(400).json({error: 'يُمنع منعاً باتاً إرسال أو جمع أي بيانات أو معلومات صحية للمرضى.'});
         return;
@@ -589,7 +618,7 @@ export function registerRoutes(app: Express): void {
         return;
       }
 
-      const dept = db
+      const dept = await db
         .prepare('SELECT id, name, is_active FROM departments WHERE id = ?')
         .get(departmentId) as {id: string; name: string; is_active: number} | undefined;
       if (!dept || dept.is_active !== 1) {
@@ -601,14 +630,14 @@ export function registerRoutes(app: Express): void {
       const id = generateRequestId();
       const now = new Date().toISOString();
 
-      db.prepare(
+      await db.prepare(
         `INSERT INTO cleaning_requests (
           id, department_id, room_or_location, request_type, priority, description,
           is_high_risk, status, created_by_id, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'جديد', ?, ?, ?)`,
       ).run(id, dept.id, roomOrLocation, requestType, priority, description, isHighRisk ? 1 : 0, user.id, now, now);
 
-      writeAuditLog({
+      await writeAuditLog({
         actorId: user.id,
         actorName: user.name,
         actorRole: user.role,
@@ -618,7 +647,7 @@ export function registerRoutes(app: Express): void {
         details: `${dept.name} · ${roomOrLocation} · الأولوية: ${priority}`,
       });
 
-      const created = db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
+      const created = await db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
       res.status(201).json({request: mapRequestRow(created)});
     },
   );
@@ -628,13 +657,13 @@ export function registerRoutes(app: Express): void {
     '/api/requests/:id/assign',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const user = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const workerId = sanitizeText(req.body?.workerId, 64);
       const reason = sanitizeText(req.body?.reason, 200);
 
-      const existing = db.prepare('SELECT * FROM cleaning_requests WHERE id = ?').get(id) as
+      const existing = await db.prepare('SELECT * FROM cleaning_requests WHERE id = ?').get(id) as
         | {id: string; status: RequestStatus; assigned_worker_id: string | null}
         | undefined;
 
@@ -647,7 +676,7 @@ export function registerRoutes(app: Express): void {
         return;
       }
 
-      const worker = db
+      const worker = await db
         .prepare("SELECT id, name, worker_status, is_active FROM users WHERE id = ? AND role = 'worker'")
         .get(workerId) as {id: string; name: string; worker_status: WorkerStatus; is_active: number} | undefined;
 
@@ -663,14 +692,14 @@ export function registerRoutes(app: Express): void {
       const now = new Date().toISOString();
       const isReassign = Boolean(existing.assigned_worker_id && existing.assigned_worker_id !== workerId);
 
-      db.prepare(
+      await db.prepare(
         `UPDATE cleaning_requests
          SET assigned_worker_id = ?, assigned_by_id = ?, status = 'تم الإسناد',
              assigned_at = ?, acknowledged_at = NULL, started_at = NULL, updated_at = ?
          WHERE id = ?`,
       ).run(worker.id, user.id, now, now, id);
 
-      writeAuditLog({
+      await writeAuditLog({
         actorId: user.id,
         actorName: user.name,
         actorRole: user.role,
@@ -680,7 +709,7 @@ export function registerRoutes(app: Express): void {
         details: `العامل المسند: ${worker.name}${reason ? ` · السبب: ${reason}` : ''}`,
       });
 
-      const updated = db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
+      const updated = await db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
       res.json({request: mapRequestRow(updated)});
     },
   );
@@ -690,7 +719,7 @@ export function registerRoutes(app: Express): void {
     '/api/requests/:id/priority',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const user = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const priority = sanitizeText(req.body?.priority, 20) as RequestPriority;
@@ -700,7 +729,7 @@ export function registerRoutes(app: Express): void {
         return;
       }
 
-      const existing = db.prepare('SELECT id, priority, status FROM cleaning_requests WHERE id = ?').get(id) as
+      const existing = await db.prepare('SELECT id, priority, status FROM cleaning_requests WHERE id = ?').get(id) as
         | {id: string; priority: RequestPriority; status: RequestStatus}
         | undefined;
       if (!existing) {
@@ -713,9 +742,9 @@ export function registerRoutes(app: Express): void {
       }
 
       const now = new Date().toISOString();
-      db.prepare('UPDATE cleaning_requests SET priority = ?, updated_at = ? WHERE id = ?').run(priority, now, id);
+      await db.prepare('UPDATE cleaning_requests SET priority = ?, updated_at = ? WHERE id = ?').run(priority, now, id);
 
-      writeAuditLog({
+      await writeAuditLog({
         actorId: user.id,
         actorName: user.name,
         actorRole: user.role,
@@ -725,7 +754,7 @@ export function registerRoutes(app: Express): void {
         details: `من "${existing.priority}" إلى "${priority}"`,
       });
 
-      const updated = db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
+      const updated = await db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
       res.json({request: mapRequestRow(updated)});
     },
   );
@@ -735,12 +764,12 @@ export function registerRoutes(app: Express): void {
     '/api/requests/:id/cancel',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const user = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const reason = sanitizeText(req.body?.reason, 250) || 'تم الإلغاء من قبل الإشراف';
 
-      const existing = db.prepare('SELECT id, status FROM cleaning_requests WHERE id = ?').get(id) as
+      const existing = await db.prepare('SELECT id, status FROM cleaning_requests WHERE id = ?').get(id) as
         | {id: string; status: RequestStatus}
         | undefined;
       if (!existing) {
@@ -753,13 +782,13 @@ export function registerRoutes(app: Express): void {
       }
 
       const now = new Date().toISOString();
-      db.prepare(
+      await db.prepare(
         `UPDATE cleaning_requests
          SET status = 'ملغي', cancelled_at = ?, cancel_reason = ?, updated_at = ?
          WHERE id = ?`,
       ).run(now, reason, now, id);
 
-      writeAuditLog({
+      await writeAuditLog({
         actorId: user.id,
         actorName: user.name,
         actorRole: user.role,
@@ -769,7 +798,7 @@ export function registerRoutes(app: Express): void {
         details: reason,
       });
 
-      const updated = db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
+      const updated = await db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
       res.json({request: mapRequestRow(updated)});
     },
   );
@@ -779,12 +808,12 @@ export function registerRoutes(app: Express): void {
     '/api/requests/:id/worker-action',
     requireAuth,
     requireRole(['worker']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const user = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const action = sanitizeText(req.body?.action, 40);
 
-      const existing = db.prepare('SELECT * FROM cleaning_requests WHERE id = ?').get(id) as
+      const existing = await db.prepare('SELECT * FROM cleaning_requests WHERE id = ?').get(id) as
         | {
             id: string;
             status: RequestStatus;
@@ -814,8 +843,8 @@ export function registerRoutes(app: Express): void {
           res.status(400).json({error: 'تم تأكيد استلام المهمة مسبقاً.'});
           return;
         }
-        db.prepare('UPDATE cleaning_requests SET acknowledged_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
-        writeAuditLog({
+        await db.prepare('UPDATE cleaning_requests SET acknowledged_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
+        await writeAuditLog({
           actorId: user.id,
           actorName: user.name,
           actorRole: user.role,
@@ -826,12 +855,12 @@ export function registerRoutes(app: Express): void {
         });
       } else if (action === 'start') {
         const ackAt = existing.acknowledged_at ?? now;
-        db.prepare(
+        await db.prepare(
           `UPDATE cleaning_requests
            SET status = 'قيد التنفيذ', acknowledged_at = ?, started_at = COALESCE(started_at, ?), updated_at = ?
            WHERE id = ?`,
         ).run(ackAt, now, now, id);
-        writeAuditLog({
+        await writeAuditLog({
           actorId: user.id,
           actorName: user.name,
           actorRole: user.role,
@@ -843,12 +872,12 @@ export function registerRoutes(app: Express): void {
       } else if (action === 'complete') {
         const ackAt = existing.acknowledged_at ?? now;
         const startAt = existing.started_at ?? now;
-        db.prepare(
+        await db.prepare(
           `UPDATE cleaning_requests
            SET status = 'مكتمل', acknowledged_at = ?, started_at = ?, completed_at = ?, updated_at = ?
            WHERE id = ?`,
         ).run(ackAt, startAt, now, now, id);
-        writeAuditLog({
+        await writeAuditLog({
           actorId: user.id,
           actorName: user.name,
           actorRole: user.role,
@@ -862,7 +891,7 @@ export function registerRoutes(app: Express): void {
         return;
       }
 
-      const updated = db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
+      const updated = await db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow;
       res.json({request: mapRequestRow(updated)});
     },
   );
@@ -872,8 +901,8 @@ export function registerRoutes(app: Express): void {
     '/api/workers',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    (_req: AuthenticatedRequest, res: Response) => {
-      const rows = db
+    async (_req: AuthenticatedRequest, res: Response) => {
+      const rows = await db
         .prepare(
           `SELECT u.id, u.name, u.phone, u.shift_name, u.worker_status, u.is_active,
             (SELECT COUNT(*) FROM cleaning_requests r
@@ -911,8 +940,8 @@ export function registerRoutes(app: Express): void {
     '/api/departments',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    (_req: AuthenticatedRequest, res: Response) => {
-      const rows = db
+    async (_req: AuthenticatedRequest, res: Response) => {
+      const rows = await db
         .prepare('SELECT id, name, floor_or_wing, is_active, created_at FROM departments ORDER BY name ASC')
         .all() as Array<{
         id: string;
@@ -938,7 +967,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/departments',
     requireAuth,
     requireRole(['admin']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const name = sanitizeText(req.body?.name, 100);
       const floorOrWing = sanitizeText(req.body?.floorOrWing, 100);
@@ -950,21 +979,21 @@ export function registerRoutes(app: Express): void {
       }
 
       const id = customCode || `dept-${crypto.randomBytes(3).toString('hex')}`;
-      const exists = db.prepare('SELECT id FROM departments WHERE id = ?').get(id);
+      const exists = await db.prepare('SELECT id FROM departments WHERE id = ?').get(id);
       if (exists) {
         res.status(409).json({error: 'رمز القسم مستخدم مسبقاً. يرجى اختيار رمز آخر.'});
         return;
       }
 
       const now = new Date().toISOString();
-      db.prepare('INSERT INTO departments (id, name, floor_or_wing, is_active, created_at) VALUES (?, ?, ?, 1, ?)').run(
+      await db.prepare('INSERT INTO departments (id, name, floor_or_wing, is_active, created_at) VALUES (?, ?, ?, 1, ?)').run(
         id,
         name,
         floorOrWing,
         now,
       );
 
-      writeAuditLog({
+      await writeAuditLog({
         actorId: actor.id,
         actorName: actor.name,
         actorRole: actor.role,
@@ -984,10 +1013,10 @@ export function registerRoutes(app: Express): void {
     '/api/admin/departments/:id',
     requireAuth,
     requireRole(['admin']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const id = sanitizeText(req.params.id, 64);
-      const existing = db.prepare('SELECT * FROM departments WHERE id = ?').get(id) as
+      const existing = await db.prepare('SELECT * FROM departments WHERE id = ?').get(id) as
         | {id: string; name: string; floor_or_wing: string; is_active: number; created_at: string}
         | undefined;
       if (!existing) {
@@ -999,14 +1028,14 @@ export function registerRoutes(app: Express): void {
       const floorOrWing = sanitizeText(req.body?.floorOrWing, 100) || existing.floor_or_wing;
       const isActive = typeof req.body?.isActive === 'boolean' ? (req.body.isActive ? 1 : 0) : existing.is_active;
 
-      db.prepare('UPDATE departments SET name = ?, floor_or_wing = ?, is_active = ? WHERE id = ?').run(
+      await db.prepare('UPDATE departments SET name = ?, floor_or_wing = ?, is_active = ? WHERE id = ?').run(
         name,
         floorOrWing,
         isActive,
         id,
       );
 
-      writeAuditLog({
+      await writeAuditLog({
         actorId: actor.id,
         actorName: actor.name,
         actorRole: actor.role,
@@ -1027,8 +1056,8 @@ export function registerRoutes(app: Express): void {
     '/api/admin/users',
     requireAuth,
     requireRole(['admin']),
-    (_req: AuthenticatedRequest, res: Response) => {
-      const rows = db
+    async (_req: AuthenticatedRequest, res: Response) => {
+      const rows = await db
         .prepare(
           `SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at
            FROM users ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'supervisor' THEN 2 ELSE 3 END, name ASC`,
@@ -1042,7 +1071,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/users',
     requireAuth,
     requireRole(['admin']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const name = sanitizeText(req.body?.name, 80);
       const username = sanitizeText(req.body?.username, 60).toLowerCase();
@@ -1064,7 +1093,7 @@ export function registerRoutes(app: Express): void {
         return;
       }
 
-      const duplicate = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+      const duplicate = await db.prepare('SELECT id FROM users WHERE username = ?').get(username);
       if (duplicate) {
         res.status(409).json({error: 'اسم المستخدم مسجل مسبقاً.'});
         return;
@@ -1074,12 +1103,12 @@ export function registerRoutes(app: Express): void {
       const id = `USR-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
       const passwordHash = hashPassword(password);
 
-      db.prepare(
+      await db.prepare(
         `INSERT INTO users (id, name, username, password_hash, role, phone, shift_name, worker_status, is_active, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'نشط', 1, ?, ?)`,
       ).run(id, name, username, passwordHash, role, phone, shiftName, now, now);
 
-      writeAuditLog({
+      await writeAuditLog({
         actorId: actor.id,
         actorName: actor.name,
         actorRole: actor.role,
@@ -1089,7 +1118,7 @@ export function registerRoutes(app: Express): void {
         details: `${name} (${username})`,
       });
 
-      const created = db
+      const created = await db
         .prepare('SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at FROM users WHERE id = ?')
         .get(id) as Parameters<typeof mapUserRow>[0];
       res.status(201).json({user: mapUserRow(created)});
@@ -1100,10 +1129,10 @@ export function registerRoutes(app: Express): void {
     '/api/admin/users/:id',
     requireAuth,
     requireRole(['admin']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const id = sanitizeText(req.params.id, 64);
-      const existing = db
+      const existing = await db
         .prepare('SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at FROM users WHERE id = ?')
         .get(id) as Parameters<typeof mapUserRow>[0] | undefined;
 
@@ -1117,9 +1146,9 @@ export function registerRoutes(app: Express): void {
       const role = req.body?.role !== undefined ? sanitizeText(req.body.role, 20) as UserRole : existing.role;
       if (username.length < 3 || !/^[a-z0-9._@-]+$/.test(username)) { res.status(400).json({error: 'اسم المستخدم غير صالح.'}); return; }
       if (!['admin', 'supervisor', 'worker'].includes(role)) { res.status(400).json({error: 'الدور الوظيفي غير صالح.'}); return; }
-      if (db.prepare('SELECT id FROM users WHERE username = ? AND id <> ?').get(username, id)) { res.status(409).json({error: 'اسم المستخدم مستخدم من حساب آخر.'}); return; }
+      if (await db.prepare('SELECT id FROM users WHERE username = ? AND id <> ?').get(username, id)) { res.status(409).json({error: 'اسم المستخدم مستخدم من حساب آخر.'}); return; }
       if (existing.role === 'admin' && role !== 'admin') {
-        const activeAdmins = (db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND is_active = 1").get() as {count:number}).count;
+        const activeAdmins = (await db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND is_active = 1").get() as {count:number}).count;
         if (activeAdmins <= 1) { res.status(400).json({error: 'لا يمكن تغيير دور آخر مدير نشط في النظام.'}); return; }
       }
       if (id === actor.id && role !== 'admin') { res.status(400).json({error: 'لا يمكنك تغيير دور حساب المدير الحالي.'}); return; }
@@ -1145,13 +1174,13 @@ export function registerRoutes(app: Express): void {
           return;
         }
         const passwordHash = hashPassword(newPassword);
-        db.prepare(
+        await db.prepare(
           `UPDATE users
            SET name = ?, username = ?, role = ?, phone = ?, shift_name = ?, worker_status = ?, is_active = ?, password_hash = ?, updated_at = ?
            WHERE id = ?`,
         ).run(name, username, role, phone, shiftName, workerStatus, isActive, passwordHash, now, id);
       } else {
-        db.prepare(
+        await db.prepare(
           `UPDATE users
            SET name = ?, username = ?, role = ?, phone = ?, shift_name = ?, worker_status = ?, is_active = ?, updated_at = ?
            WHERE id = ?`,
@@ -1159,7 +1188,7 @@ export function registerRoutes(app: Express): void {
       }
 
       const statusChanged = existing.worker_status !== workerStatus;
-      writeAuditLog({
+      await writeAuditLog({
         actorId: actor.id,
         actorName: actor.name,
         actorRole: actor.role,
@@ -1169,7 +1198,7 @@ export function registerRoutes(app: Express): void {
         details: `${name} · الحالة: ${workerStatus} · ${isActive === 1 ? 'مفعل' : 'معطل'}`,
       });
 
-      const updated = db
+      const updated = await db
         .prepare('SELECT id, name, username, role, phone, shift_name, worker_status, is_active, created_at FROM users WHERE id = ?')
         .get(id) as Parameters<typeof mapUserRow>[0];
       res.json({user: mapUserRow(updated)});
@@ -1181,7 +1210,7 @@ export function registerRoutes(app: Express): void {
     '/api/shifts',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const dateFilter = sanitizeText(req.query.date, 20);
       const baseSql = `
         SELECT s.*, w.name AS worker_name, rb.name AS recorded_by_name
@@ -1190,7 +1219,7 @@ export function registerRoutes(app: Express): void {
         JOIN users rb ON rb.id = s.recorded_by_id
       `;
       const rows = dateFilter
-        ? (db.prepare(`${baseSql} WHERE s.shift_date = ? ORDER BY s.created_at DESC`).all(dateFilter) as Array<{
+        ? (await db.prepare(`${baseSql} WHERE s.shift_date = ? ORDER BY s.created_at DESC`).all(dateFilter) as Array<{
             id: string;
             worker_id: string;
             worker_name: string;
@@ -1202,7 +1231,7 @@ export function registerRoutes(app: Express): void {
             recorded_by_name: string;
             created_at: string;
           }>)
-        : (db.prepare(`${baseSql} ORDER BY s.shift_date DESC, s.created_at DESC LIMIT 100`).all() as Array<{
+        : (await db.prepare(`${baseSql} ORDER BY s.shift_date DESC, s.created_at DESC LIMIT 100`).all() as Array<{
             id: string;
             worker_id: string;
             worker_name: string;
@@ -1236,7 +1265,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/shifts',
     requireAuth,
     requireRole(['admin']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const workerId = sanitizeText(req.body?.workerId, 64);
       const shiftDate = sanitizeText(req.body?.shiftDate, 20);
@@ -1254,7 +1283,7 @@ export function registerRoutes(app: Express): void {
         return;
       }
 
-      const worker = db.prepare("SELECT id, name FROM users WHERE id = ? AND role = 'worker'").get(workerId) as
+      const worker = await db.prepare("SELECT id, name FROM users WHERE id = ? AND role = 'worker'").get(workerId) as
         | {id: string; name: string}
         | undefined;
       if (!worker) {
@@ -1265,14 +1294,14 @@ export function registerRoutes(app: Express): void {
       const now = new Date().toISOString();
       const id = `SHF-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
-      const tx = db.transaction(() => {
-        db.prepare(
+      const tx = db.transaction(async () => {
+        await db.prepare(
           `INSERT INTO worker_shifts (id, worker_id, shift_date, shift_type, phone, status, notes, recorded_by_id, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(id, worker.id, shiftDate, shiftType, phone, status, notes, actor.id, now);
 
         const mappedWorkerStatus: WorkerStatus = status === 'غائب' ? 'غائب' : 'نشط';
-        db.prepare('UPDATE users SET shift_name = ?, phone = COALESCE(?, phone), worker_status = ?, updated_at = ? WHERE id = ?').run(
+        await db.prepare('UPDATE users SET shift_name = ?, phone = COALESCE(?, phone), worker_status = ?, updated_at = ? WHERE id = ?').run(
           shiftType,
           phone,
           mappedWorkerStatus,
@@ -1280,7 +1309,7 @@ export function registerRoutes(app: Express): void {
           worker.id,
         );
 
-        writeAuditLog({
+        await writeAuditLog({
           actorId: actor.id,
           actorName: actor.name,
           actorRole: actor.role,
@@ -1291,7 +1320,7 @@ export function registerRoutes(app: Express): void {
         });
       });
 
-      tx();
+      await tx();
 
       res.status(201).json({
         shift: {
@@ -1311,8 +1340,8 @@ export function registerRoutes(app: Express): void {
   );
 
   // Shift handover register (Admin & Supervisor). Workers do not need app accounts or access.
-  app.get('/api/handovers', requireAuth, requireRole(['admin', 'supervisor']), (_req: AuthenticatedRequest, res: Response) => {
-    const rows = db.prepare(`
+  app.get('/api/handovers', requireAuth, requireRole(['admin', 'supervisor']), async (_req: AuthenticatedRequest, res: Response) => {
+    const rows = await db.prepare(`
       SELECT h.*, fw.name AS from_worker_name, tw.name AS to_worker_name,
              rb.name AS recorded_by_name, cb.name AS confirmed_by_name
       FROM shift_handovers h
@@ -1332,7 +1361,7 @@ export function registerRoutes(app: Express): void {
     }))});
   });
 
-  app.post('/api/handovers', requireAuth, requireRole(['admin', 'supervisor']), (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/handovers', requireAuth, requireRole(['admin', 'supervisor']), async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.user!;
     const fromWorkerId = sanitizeText(req.body?.fromWorkerId, 64);
     const toWorkerId = sanitizeText(req.body?.toWorkerId, 64);
@@ -1342,81 +1371,100 @@ export function registerRoutes(app: Express): void {
     if (!fromWorkerId || !toWorkerId || fromWorkerId === toWorkerId || !/^\\d{4}-\\d{2}-\\d{2}$/.test(shiftDate) || !shiftType) {
       res.status(400).json({error: 'يرجى تحديد العاملين المختلفين وتاريخ ونوع الوردية.'}); return;
     }
-    const workers = db.prepare("SELECT id, name FROM users WHERE id IN (?, ?) AND role = 'worker' AND is_active = 1 AND worker_status = 'نشط'").all(fromWorkerId, toWorkerId) as Array<{id:string;name:string}>;
+    const workers = await db.prepare("SELECT id, name FROM users WHERE id IN (?, ?) AND role = 'worker' AND is_active = 1 AND worker_status = 'نشط'").all(fromWorkerId, toWorkerId) as Array<{id:string;name:string}>;
     if (workers.length !== 2) { res.status(400).json({error: 'يجب اختيار عاملين نشطين مختلفين.'}); return; }
     const fromWorker = workers.find(w => w.id === fromWorkerId)!;
     const toWorker = workers.find(w => w.id === toWorkerId)!;
-    const pendingTasks = db.prepare(`
+    const pendingTasks = await db.prepare(`
       SELECT id, department_id, room_or_location, request_type, priority, status, created_at
       FROM cleaning_requests WHERE assigned_worker_id = ? AND status IN ('تم الإسناد', 'قيد التنفيذ')
       ORDER BY CASE priority WHEN 'عاجل' THEN 1 WHEN 'عالي' THEN 2 ELSE 3 END, created_at ASC
     `).all(fromWorkerId) as Array<{id:string;department_id:string;room_or_location:string;request_type:string;priority:string;status:string;created_at:string}>;
     const id = `HND-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const now = new Date().toISOString();
-    const tx = db.transaction(() => {
-      db.prepare(`INSERT INTO shift_handovers
+    const tx = db.transaction(async () => {
+      await db.prepare(`INSERT INTO shift_handovers
         (id, from_worker_id, to_worker_id, shift_date, shift_type, outgoing_notes, pending_tasks_json, status, incoming_notes, recorded_by_id, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'بانتظار التأكيد', '', ?, ?)`
       ).run(id, fromWorkerId, toWorkerId, shiftDate, shiftType, outgoingNotes, JSON.stringify(pendingTasks), actor.id, now);
 
       // Transfer every still-open task to the incoming worker without closing it or resetting its progress.
-      db.prepare(`UPDATE cleaning_requests
+      await db.prepare(`UPDATE cleaning_requests
         SET assigned_worker_id = ?, assigned_by_id = ?, assigned_at = COALESCE(assigned_at, ?), updated_at = ?
         WHERE assigned_worker_id = ? AND status IN ('تم الإسناد', 'قيد التنفيذ')`
       ).run(toWorkerId, actor.id, now, now, fromWorkerId);
 
-      writeAuditLog({actorId:actor.id, actorName:actor.name, actorRole:actor.role, action:'تسجيل تسليم وردية ونقل الطلبات المفتوحة', entityType:'shift_handover', entityId:id,
+      await writeAuditLog({actorId:actor.id, actorName:actor.name, actorRole:actor.role, action:'تسجيل تسليم وردية ونقل الطلبات المفتوحة', entityType:'shift_handover', entityId:id,
         details:`${fromWorker.name} إلى ${toWorker.name} · ${shiftDate} · ${shiftType} · طلبات معلقة نُقلت: ${pendingTasks.length}${outgoingNotes ? ` · ${outgoingNotes}` : ''}`});
     });
-    tx();
+    await tx();
     res.status(201).json({handover:{id,fromWorkerId,fromWorkerName:fromWorker.name,toWorkerId,toWorkerName:toWorker.name,shiftDate,shiftType,outgoingNotes,pendingTasks,status:'بانتظار التأكيد',incomingNotes:'',recordedByName:actor.name,confirmedByName:null,createdAt:now,confirmedAt:null}});
   });
 
-  app.patch('/api/handovers/:id/confirm', requireAuth, requireRole(['admin', 'supervisor']), (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/handovers/:id/confirm', requireAuth, requireRole(['admin', 'supervisor']), async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.user!;
     const id = sanitizeText(req.params.id, 64);
     const incomingNotes = sanitizeText(req.body?.incomingNotes, 1000);
-    const existing = db.prepare('SELECT id, status, from_worker_id, to_worker_id FROM shift_handovers WHERE id = ?').get(id) as
+    const existing = await db.prepare('SELECT id, status, from_worker_id, to_worker_id FROM shift_handovers WHERE id = ?').get(id) as
       | {id:string;status:string;from_worker_id:string;to_worker_id:string} | undefined;
     if (!existing) { res.status(404).json({error:'سجل التسليم غير موجود.'}); return; }
     if (existing.status === 'تم الاستلام') { res.status(400).json({error:'تم تأكيد استلام هذه الوردية مسبقاً.'}); return; }
     const now = new Date().toISOString();
-    db.prepare("UPDATE shift_handovers SET status = 'تم الاستلام', incoming_notes = ?, confirmed_by_id = ?, confirmed_at = ? WHERE id = ?")
+    await db.prepare("UPDATE shift_handovers SET status = 'تم الاستلام', incoming_notes = ?, confirmed_by_id = ?, confirmed_at = ? WHERE id = ?")
       .run(incomingNotes, actor.id, now, id);
-    writeAuditLog({actorId:actor.id,actorName:actor.name,actorRole:actor.role,action:'تأكيد استلام وردية',entityType:'shift_handover',entityId:id,
+    await writeAuditLog({actorId:actor.id,actorName:actor.name,actorRole:actor.role,action:'تأكيد استلام وردية',entityType:'shift_handover',entityId:id,
       details:`تم تأكيد استلام الوردية من ${existing.from_worker_id} إلى ${existing.to_worker_id}${incomingNotes ? ` · ملاحظات: ${incomingNotes}` : ''}`});
     res.json({ok:true,status:'تم الاستلام',confirmedAt:now});
   });
 
   // Worker notes and incident history (Admin & Supervisor)
-  app.get('/api/worker-notes', requireAuth, requireRole(['admin', 'supervisor']), (_req: AuthenticatedRequest, res: Response) => {
-    const rows = db.prepare(`SELECT n.id, n.worker_id, w.name AS worker_name, n.note_type, n.details, u.name AS created_by_name, n.created_at
+  app.get('/api/worker-notes', requireAuth, requireRole(['admin', 'supervisor']), async (_req: AuthenticatedRequest, res: Response) => {
+    const rows = await db.prepare(`SELECT n.id, n.worker_id, w.name AS worker_name, n.note_type, n.details, u.name AS created_by_name, n.created_at
       FROM worker_notes n JOIN users w ON w.id = n.worker_id JOIN users u ON u.id = n.created_by_id
       ORDER BY n.created_at DESC LIMIT 300`).all() as Array<{id:string;worker_id:string;worker_name:string;note_type:string;details:string;created_by_name:string;created_at:string}>;
     res.json({notes: rows.map(n => ({id:n.id, workerId:n.worker_id, workerName:n.worker_name, noteType:n.note_type, details:n.details, createdByName:n.created_by_name, createdAt:n.created_at}))});
   });
 
-  app.post('/api/worker-notes', requireAuth, requireRole(['admin', 'supervisor']), (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/worker-notes', requireAuth, requireRole(['admin', 'supervisor']), async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.user!;
     const workerId = sanitizeText(req.body?.workerId, 64);
     const noteType = sanitizeText(req.body?.noteType, 30);
     const details = sanitizeText(req.body?.details, 1000);
     if (!['تأخير', 'شكوى', 'ملاحظة', 'إشادة'].includes(noteType) || details.length < 3) { res.status(400).json({error:'يرجى تحديد نوع الملاحظة وكتابة تفاصيل واضحة.'}); return; }
-    const worker = db.prepare("SELECT id, name FROM users WHERE id = ? AND role = 'worker'").get(workerId) as {id:string;name:string}|undefined;
+    const worker = await db.prepare("SELECT id, name FROM users WHERE id = ? AND role = 'worker'").get(workerId) as {id:string;name:string}|undefined;
     if (!worker) { res.status(404).json({error:'العامل غير موجود.'}); return; }
     const id = `WNOTE-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
     const now = new Date().toISOString();
-    db.prepare('INSERT INTO worker_notes (id, worker_id, note_type, details, created_by_id, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, workerId, noteType, details, actor.id, now);
-    writeAuditLog({actorId:actor.id,actorName:actor.name,actorRole:actor.role,action:'تسجيل ملاحظة في ملف العامل',entityType:'worker_note',entityId:id,details:`${worker.name} · ${noteType} · ${details}`});
+    await db.prepare('INSERT INTO worker_notes (id, worker_id, note_type, details, created_by_id, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, workerId, noteType, details, actor.id, now);
+    await writeAuditLog({actorId:actor.id,actorName:actor.name,actorRole:actor.role,action:'تسجيل ملاحظة في ملف العامل',entityType:'worker_note',entityId:id,details:`${worker.name} · ${noteType} · ${details}`});
     res.status(201).json({note:{id,workerId,workerName:worker.name,noteType,details,createdByName:actor.name,createdAt:now}});
   });
 
-  // Admin-only point-in-time SQLite backup download. This exports a consistent database snapshot.
-  app.get('/api/admin/backup', requireAuth, requireRole(['admin']), (_req: AuthenticatedRequest, res: Response) => {
-    const snapshot = db.serialize();
+  // Admin-only consistent PostgreSQL backup. The export contains data only, never credentials.
+  app.get('/api/admin/backup', requireAuth, requireRole(['admin']), async (_req: AuthenticatedRequest, res: Response) => {
+    const tableNames = [
+      'app_settings', 'users', 'departments', 'cleaning_requests', 'worker_shifts',
+      'shift_handovers', 'nursing_status_reports', 'nursing_performance_ratings',
+      'worker_notes', 'audit_logs',
+    ] as const;
+    const snapshot = await withPgTransaction(async () => {
+      const tables: Record<string, unknown[]> = {};
+      for (const table of tableNames) {
+        const result = table === 'app_settings'
+          ? await pgQuery("SELECT key, value FROM public.app_settings WHERE key <> 'session_secret'")
+          : await pgQuery(`SELECT * FROM public.${table}`);
+        tables[table] = result.rows;
+      }
+      return Buffer.from(JSON.stringify({
+        format: 'imc-clean-manager-postgres-backup',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        tables,
+      }, null, 2), 'utf8');
+    }, {isolationLevel: 'REPEATABLE READ'});
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    res.setHeader('Content-Type', 'application/vnd.sqlite3');
-    res.setHeader('Content-Disposition', `attachment; filename="imc-clean-backup-${stamp}.sqlite"`);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="imc-clean-backup-${stamp}.json"`);
     res.setHeader('Cache-Control', 'no-store');
     res.send(snapshot);
   });
@@ -1426,7 +1474,7 @@ export function registerRoutes(app: Express): void {
     '/api/reports',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const period = req.query.period === 'monthly' ? 'monthly' : req.query.period === 'weekly' ? 'weekly' : 'daily';
       const rawDate = sanitizeText(req.query.date, 20);
       const endDateObj = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(`${rawDate}T23:59:59.999Z`) : new Date();
@@ -1440,15 +1488,15 @@ export function registerRoutes(app: Express): void {
       startDateObj.setUTCHours(0, 0, 0, 0);
       const startDateIso = startDateObj.toISOString();
 
-      const requests = db
+      const requests = await db
         .prepare(`${REQUEST_SELECT_SQL} WHERE r.created_at >= ? AND r.created_at <= ? ORDER BY r.created_at DESC`)
         .all(startDateIso, endDateIso) as RawRequestRow[];
 
-      const departments = db
+      const departments = await db
         .prepare('SELECT id, name FROM departments ORDER BY name ASC')
         .all() as Array<{id: string; name: string}>;
 
-      const workers = db
+      const workers = await db
         .prepare("SELECT id, name, worker_status, shift_name FROM users WHERE role = 'worker' ORDER BY name ASC")
         .all() as Array<{id: string; name: string; worker_status: WorkerStatus; shift_name: string | null}>;
 
@@ -1502,7 +1550,7 @@ export function registerRoutes(app: Express): void {
       });
 
       // Also include any currently open requests even if created slightly earlier so delayed requests never disappear
-      const allOpenRequests = db
+      const allOpenRequests = await db
         .prepare(`${REQUEST_SELECT_SQL} WHERE r.status IN ('جديد', 'تم الإسناد', 'قيد التنفيذ') ORDER BY r.created_at ASC`)
         .all() as RawRequestRow[];
 
@@ -1554,8 +1602,8 @@ export function registerRoutes(app: Express): void {
     '/api/admin/audit-logs',
     requireAuth,
     requireRole(['admin']),
-    (_req: AuthenticatedRequest, res: Response) => {
-      const rows = db
+    async (_req: AuthenticatedRequest, res: Response) => {
+      const rows = await db
         .prepare(
           `SELECT id, actor_id, actor_name, actor_role, action, entity_type, entity_id, details, created_at
            FROM audit_logs ORDER BY created_at DESC LIMIT 150`,
@@ -1589,7 +1637,7 @@ export function registerRoutes(app: Express): void {
   );
 
   // Public: Download clean project source ZIP (excludes DB, env, node_modules, and user uploads)
-  app.get('/api/project-zip', (_req: Request, res: Response) => {
+  app.get('/api/project-zip', async (_req: Request, res: Response) => {
     const zipBuffer = buildProjectZipBuffer();
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', 'attachment; filename="IMC-Clean-Manager.zip"');
@@ -1604,7 +1652,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/project-zip-ticket',
     requireAuth,
     requireRole(['admin']),
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const signed = signDownloadTicket(req.user!.id, 'project-zip');
       res.setHeader('Cache-Control', 'no-store');
       res.json(signed);
@@ -1612,7 +1660,7 @@ export function registerRoutes(app: Express): void {
   );
 
   // Admin: Download project source ZIP (supports cookie/Bearer OR short-lived ?ticket=)
-  app.get('/api/admin/project-zip', (req: Request, res: Response) => {
+  app.get('/api/admin/project-zip', async (req: Request, res: Response) => {
     const ticketParam = typeof req.query.ticket === 'string' ? req.query.ticket.trim() : '';
     let uid: string | null = null;
 
@@ -1633,7 +1681,7 @@ export function registerRoutes(app: Express): void {
       uid = tokenPayload.uid;
     }
 
-    const user = db
+    const user = await db
       .prepare('SELECT id, role, is_active FROM users WHERE id = ?')
       .get(uid) as Pick<AuthenticatedUserRow, 'id' | 'role' | 'is_active'> | undefined;
 

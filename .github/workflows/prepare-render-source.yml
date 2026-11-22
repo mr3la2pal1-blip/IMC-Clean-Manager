@@ -21,6 +21,12 @@ jobs:
           mkdir -p /tmp/imc-preserve/components
           cp server/routes.ts /tmp/imc-preserve/routes.ts
           cp server/db.ts /tmp/imc-preserve/db.ts
+          cp server.ts /tmp/imc-preserve/server.ts
+          cp package.json /tmp/imc-preserve/package.json
+          cp server/postgres.ts /tmp/imc-preserve/postgres.ts
+          cp server/postgres-compat.ts /tmp/imc-preserve/postgres-compat.ts
+          cp server/auth-postgres.ts /tmp/imc-preserve/auth-postgres.ts
+          cp server/postgres-compat.test.ts /tmp/imc-preserve/postgres-compat.test.ts
           cp src/api.ts /tmp/imc-preserve/api.ts
           cp src/types.ts /tmp/imc-preserve/types.ts
           cp src/App.tsx /tmp/imc-preserve/App.tsx
@@ -41,6 +47,12 @@ jobs:
         run: |
           cp /tmp/imc-preserve/routes.ts server/routes.ts
           cp /tmp/imc-preserve/db.ts server/db.ts
+          cp /tmp/imc-preserve/server.ts server.ts
+          cp /tmp/imc-preserve/package.json package.json
+          cp /tmp/imc-preserve/postgres.ts server/postgres.ts
+          cp /tmp/imc-preserve/postgres-compat.ts server/postgres-compat.ts
+          cp /tmp/imc-preserve/auth-postgres.ts server/auth-postgres.ts
+          cp /tmp/imc-preserve/postgres-compat.test.ts server/postgres-compat.test.ts
           cp /tmp/imc-preserve/api.ts src/api.ts
           cp /tmp/imc-preserve/types.ts src/types.ts
           cp /tmp/imc-preserve/App.tsx src/App.tsx
