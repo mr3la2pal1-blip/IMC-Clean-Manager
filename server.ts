@@ -14,8 +14,8 @@ async function startServer() {
 
   registerRoutes(app);
 
-  const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(distPath);
   const distPath = path.resolve(process.cwd(), 'dist');
+  const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(distPath);
 
   if (!isProd || !fs.existsSync(distPath)) {
     const {createServer: createViteServer} = await import('vite');
