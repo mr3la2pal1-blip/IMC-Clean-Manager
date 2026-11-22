@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import {registerRoutes} from './server/routes.ts';
+import {initializePostgres} from './server/postgres.ts';
 
 async function startServer() {
   const app = express();
@@ -12,6 +13,7 @@ async function startServer() {
   app.set('trust proxy', true);
   app.use(express.json({limit: '256kb'}));
 
+  await initializePostgres();
   registerRoutes(app);
 
   const distPath = path.resolve(process.cwd(), 'dist');
