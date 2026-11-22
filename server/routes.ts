@@ -1415,8 +1415,8 @@ export function registerRoutes(app: Express): void {
   app.get('/api/admin/backup', requireAuth, requireRole(['admin']), (_req: AuthenticatedRequest, res: Response) => {
     const snapshot = db.serialize();
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    res.setHeader('Content-Type', 'application/vnd.sqlite3');
-    res.setHeader('Content-Disposition', `attachment; filename="imc-clean-backup-${stamp}.sqlite"`);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="imc-clean-backup-${stamp}.json"`);
     res.setHeader('Cache-Control', 'no-store');
     res.send(snapshot);
   });

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import {registerRoutes} from './server/routes.ts';
+import {initializeDatabase} from './server/db.ts';
 
 async function startServer() {
   const app = express();
@@ -12,10 +13,11 @@ async function startServer() {
   app.set('trust proxy', true);
   app.use(express.json({limit: '256kb'}));
 
+  initializeDatabase();
   registerRoutes(app);
 
-  const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(distPath);
   const distPath = path.resolve(process.cwd(), 'dist');
+  const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(distPath);
 
   if (!isProd || !fs.existsSync(distPath)) {
     const {createServer: createViteServer} = await import('vite');
