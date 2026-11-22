@@ -271,7 +271,7 @@ export function registerRoutes(app: Express): void {
     res.status(201).json({user: mapUserRow(userRow), token});
   });
 
-  app.post('/api/auth/login', async async (req: Request, res: Response) => {
+  app.post('/api/auth/login', async (req: Request, res: Response) => {
     const username = sanitizeText(req.body?.username, 60).toLowerCase();
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
@@ -312,12 +312,12 @@ export function registerRoutes(app: Express): void {
     res.json({user: mapUserRow(userRow), token});
   });
 
-  app.post('/api/auth/logout', async async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/auth/logout', async (req: AuthenticatedRequest, res: Response) => {
     clearSessionCookie(res, req);
     res.json({ok: true});
   });
 
-  app.get('/api/auth/me', requireAuth, async async (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     if (!req.user) {
       res.status(401).json({error: 'غير مصرح.'});
       return;
@@ -347,7 +347,7 @@ export function registerRoutes(app: Express): void {
     });
   });
 
-  app.post('/api/public/requests', async async (req: Request, res: Response) => {
+  app.post('/api/public/requests', async (req: Request, res: Response) => {
     if (containsPhiPayloadKeys(req.body)) {
       res.status(400).json({error: 'يُمنع منعاً باتاً إرسال أو جمع أي بيانات أو معلومات صحية للمرضى.'});
       return;
@@ -413,7 +413,7 @@ export function registerRoutes(app: Express): void {
   });
 
   // Public nursing feedback about cleaning staff performance.
-  app.post('/api/public/nursing-performance-ratings', async async (req: Request, res: Response) => {
+  app.post('/api/public/nursing-performance-ratings', async (req: Request, res: Response) => {
     const departmentId = sanitizeText(req.body?.departmentId, 64);
     const requestId = sanitizeText(req.body?.requestId, 64);
     const location = sanitizeText(req.body?.location, 120);
@@ -472,7 +472,7 @@ export function registerRoutes(app: Express): void {
   });
 
   // Public QR status report from nursing staff. This records feedback without changing the worker's task status.
-  app.post('/api/public/nursing-status-reports', async async (req: Request, res: Response) => {
+  app.post('/api/public/nursing-status-reports', async (req: Request, res: Response) => {
     const departmentId = sanitizeText(req.body?.departmentId, 64);
     const status = sanitizeText(req.body?.status, 80);
     const location = sanitizeText(req.body?.location, 120);
@@ -530,7 +530,7 @@ export function registerRoutes(app: Express): void {
   });
 
   // Authenticated requests listing (strict server-side RBAC filtering!)
-  app.get('/api/requests', requireAuth, async async (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/requests', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
     let rows: RawRequestRow[];
     if (user.role === 'worker') {
@@ -546,7 +546,7 @@ export function registerRoutes(app: Express): void {
   });
 
   // Single request + audit trail (workers can only view their own assigned tasks)
-  app.get('/api/requests/:id', requireAuth, async async (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/requests/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
     const id = sanitizeText(req.params.id, 64);
     const row = await db.prepare(`${REQUEST_SELECT_SQL} WHERE r.id = ?`).get(id) as RawRequestRow | undefined;
@@ -599,7 +599,7 @@ export function registerRoutes(app: Express): void {
     '/api/requests',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       if (containsPhiPayloadKeys(req.body)) {
         res.status(400).json({error: 'يُمنع منعاً باتاً إرسال أو جمع أي بيانات أو معلومات صحية للمرضى.'});
         return;
@@ -657,7 +657,7 @@ export function registerRoutes(app: Express): void {
     '/api/requests/:id/assign',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const user = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const workerId = sanitizeText(req.body?.workerId, 64);
@@ -719,7 +719,7 @@ export function registerRoutes(app: Express): void {
     '/api/requests/:id/priority',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const user = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const priority = sanitizeText(req.body?.priority, 20) as RequestPriority;
@@ -764,7 +764,7 @@ export function registerRoutes(app: Express): void {
     '/api/requests/:id/cancel',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const user = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const reason = sanitizeText(req.body?.reason, 250) || 'تم الإلغاء من قبل الإشراف';
@@ -808,7 +808,7 @@ export function registerRoutes(app: Express): void {
     '/api/requests/:id/worker-action',
     requireAuth,
     requireRole(['worker']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const user = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const action = sanitizeText(req.body?.action, 40);
@@ -967,7 +967,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/departments',
     requireAuth,
     requireRole(['admin']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const name = sanitizeText(req.body?.name, 100);
       const floorOrWing = sanitizeText(req.body?.floorOrWing, 100);
@@ -1013,7 +1013,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/departments/:id',
     requireAuth,
     requireRole(['admin']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const existing = await db.prepare('SELECT * FROM departments WHERE id = ?').get(id) as
@@ -1071,7 +1071,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/users',
     requireAuth,
     requireRole(['admin']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const name = sanitizeText(req.body?.name, 80);
       const username = sanitizeText(req.body?.username, 60).toLowerCase();
@@ -1129,7 +1129,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/users/:id',
     requireAuth,
     requireRole(['admin']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const id = sanitizeText(req.params.id, 64);
       const existing = await db
@@ -1210,7 +1210,7 @@ export function registerRoutes(app: Express): void {
     '/api/shifts',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const dateFilter = sanitizeText(req.query.date, 20);
       const baseSql = `
         SELECT s.*, w.name AS worker_name, rb.name AS recorded_by_name
@@ -1265,7 +1265,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/shifts',
     requireAuth,
     requireRole(['admin']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const actor = req.user!;
       const workerId = sanitizeText(req.body?.workerId, 64);
       const shiftDate = sanitizeText(req.body?.shiftDate, 20);
@@ -1361,7 +1361,7 @@ export function registerRoutes(app: Express): void {
     }))});
   });
 
-  app.post('/api/handovers', requireAuth, requireRole(['admin', 'supervisor']), async async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/handovers', requireAuth, requireRole(['admin', 'supervisor']), async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.user!;
     const fromWorkerId = sanitizeText(req.body?.fromWorkerId, 64);
     const toWorkerId = sanitizeText(req.body?.toWorkerId, 64);
@@ -1401,7 +1401,7 @@ export function registerRoutes(app: Express): void {
     res.status(201).json({handover:{id,fromWorkerId,fromWorkerName:fromWorker.name,toWorkerId,toWorkerName:toWorker.name,shiftDate,shiftType,outgoingNotes,pendingTasks,status:'بانتظار التأكيد',incomingNotes:'',recordedByName:actor.name,confirmedByName:null,createdAt:now,confirmedAt:null}});
   });
 
-  app.patch('/api/handovers/:id/confirm', requireAuth, requireRole(['admin', 'supervisor']), async async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/handovers/:id/confirm', requireAuth, requireRole(['admin', 'supervisor']), async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.user!;
     const id = sanitizeText(req.params.id, 64);
     const incomingNotes = sanitizeText(req.body?.incomingNotes, 1000);
@@ -1425,7 +1425,7 @@ export function registerRoutes(app: Express): void {
     res.json({notes: rows.map(n => ({id:n.id, workerId:n.worker_id, workerName:n.worker_name, noteType:n.note_type, details:n.details, createdByName:n.created_by_name, createdAt:n.created_at}))});
   });
 
-  app.post('/api/worker-notes', requireAuth, requireRole(['admin', 'supervisor']), async async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/worker-notes', requireAuth, requireRole(['admin', 'supervisor']), async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.user!;
     const workerId = sanitizeText(req.body?.workerId, 64);
     const noteType = sanitizeText(req.body?.noteType, 30);
@@ -1472,7 +1472,7 @@ export function registerRoutes(app: Express): void {
     '/api/reports',
     requireAuth,
     requireRole(['admin', 'supervisor']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const period = req.query.period === 'monthly' ? 'monthly' : req.query.period === 'weekly' ? 'weekly' : 'daily';
       const rawDate = sanitizeText(req.query.date, 20);
       const endDateObj = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(`${rawDate}T23:59:59.999Z`) : new Date();
@@ -1650,7 +1650,7 @@ export function registerRoutes(app: Express): void {
     '/api/admin/project-zip-ticket',
     requireAuth,
     requireRole(['admin']),
-    async async (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const signed = signDownloadTicket(req.user!.id, 'project-zip');
       res.setHeader('Cache-Control', 'no-store');
       res.json(signed);
@@ -1658,7 +1658,7 @@ export function registerRoutes(app: Express): void {
   );
 
   // Admin: Download project source ZIP (supports cookie/Bearer OR short-lived ?ticket=)
-  app.get('/api/admin/project-zip', async async (req: Request, res: Response) => {
+  app.get('/api/admin/project-zip', async (req: Request, res: Response) => {
     const ticketParam = typeof req.query.ticket === 'string' ? req.query.ticket.trim() : '';
     let uid: string | null = null;
 
