@@ -21,7 +21,7 @@ import {
   verifyPassword,
   verifySessionToken,
 } from './auth-postgres.ts';
-import type {AuthenticatedRequest, AuthenticatedUserRow} from './auth.ts';
+import type {AuthenticatedRequest, AuthenticatedUserRow} from './auth-postgres.ts';
 import {db, writeAuditLog} from './postgres-compat.ts';
 import {pgQuery, withPgTransaction} from './postgres.ts';
 import {buildProjectZipBuffer} from './zip.ts';
@@ -1450,7 +1450,9 @@ export function registerRoutes(app: Express): void {
     const snapshot = await withPgTransaction(async () => {
       const tables: Record<string, unknown[]> = {};
       for (const table of tableNames) {
-        const result = await pgQuery(`SELECT * FROM public.${table}`);
+        const result = table === 'app_settings'
+          ? await pgQuery("SELECT key, value FROM public.app_settings WHERE key <> 'session_secret'")
+          : await pgQuery(`SELECT * FROM public.${table}`);
         tables[table] = result.rows;
       }
       return Buffer.from(JSON.stringify({
@@ -1459,7 +1461,7 @@ export function registerRoutes(app: Express): void {
         exportedAt: new Date().toISOString(),
         tables,
       }, null, 2), 'utf8');
-    });
+    }, {isolationLevel: 'REPEATABLE READ'});
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="imc-clean-backup-${stamp}.json"`);
