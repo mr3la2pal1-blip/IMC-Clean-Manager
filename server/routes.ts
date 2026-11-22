@@ -30,6 +30,50 @@ function sanitizeText(input: unknown, maxLen: number): string {
   return input.trim().slice(0, maxLen);
 }
 
+type LoginAttemptState = { failures: number; windowStartedAt: number; blockedUntil: number };
+const loginAttempts = new Map<string, LoginAttemptState>();
+const LOGIN_FAILURE_LIMIT = 8;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_BLOCK_MS = 15 * 60 * 1000;
+
+function loginClientKey(req: Request): string {
+  return req.ip || req.socket.remoteAddress || 'unknown';
+}
+
+function enforceLoginRateLimit(req: Request, res: Response, next: (error?: unknown) => void): void {
+  const now = Date.now();
+  const key = loginClientKey(req);
+  const state = loginAttempts.get(key);
+  if (state && state.blockedUntil > now) {
+    res.setHeader('Retry-After', String(Math.ceil((state.blockedUntil - now) / 1000)));
+    res.status(429).json({error: 'تم إيقاف محاولات الدخول مؤقتاً بسبب تكرار المحاولات الخاطئة. حاول بعد قليل.'});
+    return;
+  }
+  if (state && now - state.windowStartedAt >= LOGIN_WINDOW_MS) loginAttempts.delete(key);
+  next();
+}
+
+function recordFailedLogin(req: Request): void {
+  const now = Date.now();
+  const key = loginClientKey(req);
+  const current = loginAttempts.get(key);
+  const state = !current || now - current.windowStartedAt >= LOGIN_WINDOW_MS
+    ? {failures: 0, windowStartedAt: now, blockedUntil: 0}
+    : current;
+  state.failures += 1;
+  if (state.failures >= LOGIN_FAILURE_LIMIT) state.blockedUntil = now + LOGIN_BLOCK_MS;
+  loginAttempts.set(key, state);
+  if (loginAttempts.size > 5000) {
+    for (const [client, attempt] of loginAttempts) {
+      if (attempt.blockedUntil <= now && now - attempt.windowStartedAt >= LOGIN_WINDOW_MS) loginAttempts.delete(client);
+    }
+  }
+}
+
+function clearFailedLogins(req: Request): void {
+  loginAttempts.delete(loginClientKey(req));
+}
+
 const FORBIDDEN_PHI_KEYS = [
   'patientname',
   'patient_name',
@@ -242,7 +286,7 @@ export function registerRoutes(app: Express): void {
     res.status(201).json({user: mapUserRow(userRow), token});
   });
 
-  app.post('/api/auth/login', (req: Request, res: Response) => {
+  app.post('/api/auth/login', enforceLoginRateLimit, (req: Request, res: Response) => {
     const username = sanitizeText(req.body?.username, 60).toLowerCase();
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
@@ -259,9 +303,11 @@ export function registerRoutes(app: Express): void {
       .get(username) as (Parameters<typeof mapUserRow>[0] & {password_hash: string}) | undefined;
 
     if (!userRow || !verifyPassword(password, userRow.password_hash)) {
+      recordFailedLogin(req);
       res.status(401).json({error: 'اسم المستخدم أو كلمة المرور غير صحيحة.'});
       return;
     }
+    clearFailedLogins(req);
 
     if (userRow.is_active !== 1) {
       res.status(403).json({error: 'تم تعطيل هذا الحساب. يرجى مراجعة مدير النظام.'});
