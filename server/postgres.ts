@@ -5,9 +5,7 @@ import {Pool, type PoolClient, type QueryResult, type QueryResultRow} from 'pg';
 /**
  * PostgreSQL connection for the IMC Clean Manager server.
  *
- * This module is intentionally separate from the current SQLite adapter while
- * the route handlers are being migrated. Do not switch the live server to it
- * until every database-backed route has been converted and tested.
+ * All server-side application persistence is routed through this PostgreSQL pool.
  */
 const connectionString = process.env.DATABASE_URL;
 
@@ -41,13 +39,16 @@ export async function pgQuery<T extends QueryResultRow = QueryResultRow>(
   return client ? client.query<T>(text, values) : pgPool.query<T>(text, values);
 }
 
-export async function withPgTransaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
+export async function withPgTransaction<T>(
+  work: (client: PoolClient) => Promise<T>,
+  options: {isolationLevel?: 'READ COMMITTED' | 'REPEATABLE READ'} = {},
+): Promise<T> {
   if (!connectionString) {
     throw new Error('DATABASE_URL is not configured.');
   }
   const client = await pgPool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query(options.isolationLevel ? `BEGIN ISOLATION LEVEL ${options.isolationLevel}` : 'BEGIN');
     const result = await transactionContext.run(client, () => work(client));
     await client.query('COMMIT');
     return result;
