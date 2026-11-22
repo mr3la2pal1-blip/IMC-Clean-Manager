@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import {Worker} from 'node:worker_threads';
 
 type QueryMethod = 'get'|'all'|'run';
-const worker = new Worker(new URL('./db-worker.ts', import.meta.url), {execArgv: ['--import', 'tsx']});
+const worker = new Worker(new URL('./db-worker.ts', import.meta.url));
 let requestId = 0;
 
 function rpc(action: 'query'|'dump', sql?: string, params: unknown[] = [], method?: QueryMethod|'exec'): any {
