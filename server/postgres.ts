@@ -5,7 +5,7 @@ import {Pool, type PoolClient, type QueryResult, type QueryResultRow} from 'pg';
 /**
  * PostgreSQL connection for the IMC Clean Manager server.
  *
- * All server-side application persistence is routed through this PostgreSQL pool.
+ * Server-side persistence uses this pool and a transaction-scoped async context.
  */
 const connectionString = process.env.DATABASE_URL;
 
