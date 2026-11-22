@@ -34,7 +34,7 @@ function bindParameters(sql: string): string {
   return result;
 }
 
-function normalizeSql(sql: string): string {
+export function normalizeSql(sql: string): string {
   const ignoreInsert = /^\s*INSERT\s+OR\s+IGNORE\s+INTO\b/i.test(sql);
   let normalized = ignoreInsert ? sql.replace(/^\s*INSERT\s+OR\s+IGNORE\s+INTO\b/i, 'INSERT INTO') : sql;
   normalized = bindParameters(normalized);
