@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {AsyncLocalStorage} from 'node:async_hooks';
 import {Pool, type PoolClient, type QueryResult, type QueryResultRow} from 'pg';
 
 /**
@@ -13,6 +14,8 @@ const connectionString = process.env.DATABASE_URL;
 if (!connectionString && process.env.NODE_ENV === 'production' && process.env.ENABLE_POSTGRES_MIGRATION === 'true') {
   throw new Error('DATABASE_URL is required when ENABLE_POSTGRES_MIGRATION=true.');
 }
+
+const transactionContext = new AsyncLocalStorage<PoolClient>();
 
 export const pgPool = new Pool({
   ...(connectionString ? {connectionString} : {}),
@@ -34,7 +37,8 @@ export async function pgQuery<T extends QueryResultRow = QueryResultRow>(
   if (!connectionString) {
     throw new Error('DATABASE_URL is not configured.');
   }
-  return pgPool.query<T>(text, values);
+  const client = transactionContext.getStore();
+  return client ? client.query<T>(text, values) : pgPool.query<T>(text, values);
 }
 
 export async function withPgTransaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -44,7 +48,7 @@ export async function withPgTransaction<T>(work: (client: PoolClient) => Promise
   const client = await pgPool.connect();
   try {
     await client.query('BEGIN');
-    const result = await work(client);
+    const result = await transactionContext.run(client, () => work(client));
     await client.query('COMMIT');
     return result;
   } catch (error) {
