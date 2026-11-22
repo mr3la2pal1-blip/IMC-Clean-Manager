@@ -164,7 +164,7 @@ export function registerRoutes(app: Express): void {
   // First-run setup check: returns true only when 0 users exist in DB
   app.get('/api/auth/setup-status', (_req: Request, res: Response) => {
     const row = db.prepare('SELECT COUNT(*) AS count FROM users').get() as {count: number};
-    res.json({needsSetup: row.count === 0});
+    res.json({needsSetup: Number(row.count) === 0});
   });
 
   // One-time bootstrap for initial System Administrator (no hardcoded passwords!)
